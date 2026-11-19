@@ -31,21 +31,22 @@ test('the rules: day 7 on, no Sunday, last start 16:00 weekday / 13:30 Saturday,
     '2026-12-14T09:00 Monday 25']);
 });
 
-function fakeAscend(opts: { history?: unknown[]; mangle?: (a: any) => void } = {}) {
+function fakeAscend(opts: { history?: unknown[]; mangle?: (a: any) => void; tajSlots?: boolean } = {}) {
   const calls: string[] = [];
   let saved: any = null;
   const s: Caller = {
     async call(method, path, body) {
       calls.push(`${method} ${path.split('?')[0]}`);
       if (path === '/bootstrap/operatory') return { status: 200, json: [{ id: 49, name: 'SRP/FILLS' }, { id: 50, name: 'NEW PATIENTS' }] };
-      if (path === '/bootstrap/provider') return { status: 200, json: [{ id: 1, isSchedulingEligible: true }, { id: 2, isSchedulingEligible: true }, { id: 3 }] };
+      if (path === '/bootstrap/provider') return { status: 200, json: [{ id: 1, lastName: 'Rai', isSchedulingEligible: true }, { id: 2, lastName: 'Taj', isSchedulingEligible: true }, { id: 3, lastName: 'Taj' }] };
       if (path === '/bootstrap/location') return { status: 200, json: [{ id: 700 }] };
       if (path.startsWith('/v3/availableAppointments')) {
         const q = new URLSearchParams(path.split('?')[1]);
         assert.equal(q.get('operatories'), '50');
-        assert.equal(q.get('providers'), '1,2');
         const from = Number(q.get('startDate'));
-        return { status: 200, json: { slots: [slot('2026-12-01', '08:30', 1), slot('2026-12-05', '09:00', 2)].filter((x) => x.start >= from) } };
+        const asked = (q.get('providers') ?? '').split(',').map(Number);
+        const all = [slot('2026-12-01', '08:30', 1), slot('2026-12-03', '10:00', 1), ...(opts.tajSlots === false ? [] : [slot('2026-12-05', '09:00', 2)])];
+        return { status: 200, json: { slots: all.filter((x) => x.start >= from && asked.includes(x.provider.id)) } };
       }
       if (path === '/patient/900') return { status: 200, json: { id: 900, relationships: { primaryContact: { id: 900 } } } };
       if (path.startsWith('/appointmentREST?patientId=900')) {
@@ -61,11 +62,11 @@ function fakeAscend(opts: { history?: unknown[]; mangle?: (a: any) => void } = {
   return { s, calls, saved: () => saved };
 }
 
-test('find_open_times gives the sim\'s openings, Saturday first; other kinds are not built yet', async () => {
+test('find_open_times: a New Patient exam gets Dr. Taj\'s openings; other kinds are not built yet', async () => {
   const f = fakeAscend();
   const r: any = await findOpenTimes(f.s, { visit_kind: 'new_patient' }, NOW);
   assert.equal(r.ok, true);
-  assert.deepEqual(r.openings.map((o: any) => o.start), ['2026-12-05T09:00', '2026-12-01T08:30']);
+  assert.deepEqual(r.openings.map((o: any) => o.start), ['2026-12-05T09:00']);
   assert.deepEqual(await findOpenTimes(f.s, { visit_kind: 'filling' }, NOW),
     { ok: false, error: 'find_open_times for filling is not built yet in the Ascend link' });
   const am: any = await findOpenTimes(f.s, { visit_kind: 'new_patient', day: '2026-12-01', time_of_day: 'afternoon' }, NOW);
@@ -92,6 +93,12 @@ const MODEL_JSON = {"startDateTime":1796149800000,"endDateTime":1796151600000,"d
 test("the visit is exactly what Ascend's own Appointment model sends", () => {
   const sl: Slot = { start: 1796149800000, end: 1796151600000, operatory: { id: 19000000006656 }, provider: { id: 19000000026581 } };
   assert.deepEqual(newAppointment(sl, 19000000000764, 19000015200389), MODEL_JSON);
+});
+
+test('when Dr. Taj has no opening, any open doctor\'s, Saturdays and Mondays first then earliest', async () => {
+  const f = fakeAscend({ tajSlots: false });
+  const r: any = await findOpenTimes(f.s, { visit_kind: 'new_patient' }, NOW);
+  assert.deepEqual(r.openings.map((o: any) => o.start), ['2026-12-01T08:30', '2026-12-03T10:00']);
 });
 
 test('book refuses an opening the rules do not allow, and waits on the strike count for a patient with history', async () => {

@@ -1,5 +1,5 @@
-// find_open_times and book for the New Patient exam, the first visit kind built (decision 2185: the NEW PATIENTS
-// column, whichever doctor the open time belongs to). The rules and results are the spec sim's (vfd-agent
+// find_open_times and book for the New Patient exam, the first visit kind built: the NEW PATIENTS column on Dr. Taj's
+// openings, any open doctor only when she has none (decision 2188, Dr. Rai; it replaces 2185). The rules and results are the spec sim's (vfd-agent
 // sim/spec_sim.py _offerable, t_find_open_times, t_book): no Sundays; last start 16:00 on a weekday and 13:30 on a
 // Saturday (decision 1147); from day 7, days 7-21 the aim and a later day only when none of them is open (1077, 1842);
 // a New Patient exam's Saturdays and Mondays in days 7-21 first (1708, 1079); the opening to offer first at the top.
@@ -63,28 +63,44 @@ export function offerable(slots: Slot[], nowMs: number, kind: string): { opening
   return out.map((x) => x[2]);
 }
 
-async function columnAndDoctors(s: Caller): Promise<{ operatory: number; providers: number[] }> {
+// Dr. Rai (decision 2188): new patients go to Dr. Taj; the doctor is found by last name among the bookable ones.
+export const NEW_PATIENT_DOCTOR = /^taj$/i;
+
+type Column = { operatory: number; providers: number[]; newPatientDoctor?: number };
+
+async function columnAndDoctors(s: Caller): Promise<Column> {
   const ops: any[] = (await s.call('GET', '/bootstrap/operatory')).json as any[] ?? [];
   const np = ops.filter((o) => /^new patients?$/i.test(String(o.name ?? '').trim()));
   if (np.length !== 1) throw new Error(`expected one NEW PATIENTS column, found ${np.length}`);
   const provs: any[] = (await s.call('GET', '/bootstrap/provider')).json as any[] ?? [];
   const providers = provs.filter((p) => p.isSchedulingEligible).map((p) => p.id);
   if (!providers.length) throw new Error('no bookable doctor in Ascend');
-  return { operatory: np[0].id, providers };
+  const taj = provs.find((p) => p.isSchedulingEligible && NEW_PATIENT_DOCTOR.test(String(p.lastName ?? '').trim()));
+  return { operatory: np[0].id, providers, newPatientDoctor: taj?.id };
 }
 
-async function slotsBetween(s: Caller, col: { operatory: number; providers: number[] }, from: string, to: string): Promise<Slot[]> {
+async function slotsBetween(s: Caller, col: Column, from: string, to: string): Promise<Slot[]> {
   const q = new URLSearchParams({ startDate: String(midnight(from)), endDate: String(midnight(addDays(to, 1)) - 1),
     preferredTimes: 'EARLYMORNING,LATEMORNING,EARLYAFTERNOON,LATEAFTERNOON',
     preferredDays: 'MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY', duration: String(DURATION),
     operatories: String(col.operatory), providers: col.providers.join(',') });
   const r = await s.call('GET', `/v3/availableAppointments?${q}`);
-  return (((r.json as any)?.slots ?? []) as Slot[]).filter((x) => x?.operatory?.id === col.operatory);
+  return (((r.json as any)?.slots ?? []) as Slot[])
+    .filter((x) => x?.operatory?.id === col.operatory && col.providers.includes(x?.provider?.id));
+}
+
+// A New Patient exam: Dr. Taj's openings, any open doctor's only when she has none (decision 2188).
+async function openings(s: Caller, kind: string, nowMs: number) {
+  const col = await columnAndDoctors(s);
+  if (kind === 'new_patient' && col.newPatientDoctor) {
+    const hers = await search(s, { ...col, providers: [col.newPatientDoctor] }, kind, nowMs);
+    if (hers.length) return hers;
+  }
+  return search(s, col, kind, nowMs);
 }
 
 // Openings in days 7-21; when none is open there, the earliest after day 21 (searched to day 60).
-async function openings(s: Caller, kind: string, nowMs: number) {
-  const col = await columnAndDoctors(s);
+async function search(s: Caller, col: Column, kind: string, nowMs: number) {
   const today = local(nowMs).date;
   let found = offerable(await slotsBetween(s, col, addDays(today, WINDOW_FIRST_DAY), addDays(today, WINDOW_AIM_LAST_DAY)), nowMs, kind);
   if (!found.length) {
