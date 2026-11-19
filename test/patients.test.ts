@@ -18,7 +18,8 @@ function fakeAscend(opts: { dupRows?: unknown[]; mangle?: (p: any) => void; loca
       if (path.startsWith('/patient/potentialDuplicates')) return { status: 200, json: opts.dupRows ?? [] };
       if (path === '/settings/patient/billingType') return { status: 200, json: [{ id: 7, isDefault: false }, { id: 8, isDefault: true }] };
       if (path === '/bootstrap/location') return { status: 200, json: Array.from({ length: opts.locations ?? 1 }, (_, i) => ({ id: 500 + i })) };
-      if (method === 'POST' && path === '/patient') { saved = { ...(body as any), id: 900 }; return { status: 200, json: { patientId: 900 } }; }
+      if (path.startsWith('/patient/chartNumber/generate')) return { status: 200, json: { chartNumber: 'TT6531A', isUnique: true } };
+      if (method === 'POST' && path === '/patient/') { saved = { ...(body as any), id: 900 }; return { status: 200, json: { patientId: 900 } }; }
       if (path === '/patient/900') { const p = structuredClone(saved); opts.mangle?.(p); return { status: 200, json: p }; }
       throw new Error(`unexpected ${method} ${path}`);
     },
@@ -39,8 +40,16 @@ test('formats: phone digits, date parsing, epoch at UTC midnight, the date as th
   assert.equal(ageOn([2010, 11, 19], TODAY), 16);
 });
 
+// The body Ascend's own form sent for Test Testerson (caught and aborted at 16:02 ET 2026-11-19, nothing created).
+const FORM_BODY = {"phones":[{"sequence":1,"type":"MOBILE","number":"5135551111"}],"referredPatients":[],"relationships":{"primaryContact":{}},"patientInsurancePlans":[],"patientMedicalAlerts":[],"patientConnectionNotes":[],"relatedPatients":[],"preferredDays":{},"preferredTimes":{},"preferredLocation":{"id":19000000000764},"firstName":"Test","lastName":"Testerson","gender":"M","dateOfBirth":315532800000,"status":"NEW","isDuplicated":false,"chartNumberGenerationUnavailable":false,"patientAddress":{"address1":"123 Main Street","city":"Cincinnati","state":"OH","postalCode":"45231"},"primaryEmail":{},"languageType":"ENGLISH","contactMethod":"CALL_ME","patientAmount":100,"paymentUnit":"PERCENT","povertyLevel":100,"races":[],"billingType":{"id":19000000004323},"chartNumber":"TT6531A","displayFullName":"Test Testerson"};
+
+test("the body is exactly what Ascend's own form sends", () => {
+  const b = newPatientBody(TEST, [1980, 1, 1], { billingType: 19000000004323, location: 19000000000764, chartNumber: 'TT6531A' });
+  assert.deepEqual(JSON.parse(JSON.stringify(b)), FORM_BODY);
+});
+
 test('the body has the form fields: NEW, default billing type, the one location, 10-digit mobile, 2-letter state', () => {
-  const b: any = newPatientBody(TEST, [1980, 1, 1], { billingType: 8, location: 500 });
+  const b: any = newPatientBody(TEST, [1980, 1, 1], { billingType: 8, location: 500, chartNumber: 'TT1' });
   assert.equal(b.status, 'NEW');
   assert.equal(b.gender, 'M');
   assert.equal(b.dateOfBirth, 315532800000);
@@ -56,7 +65,7 @@ test('a new patient: duplicate check, then create, then read back; patient_id as
   const r = await createPatient(f.s, TEST, TODAY);
   assert.deepEqual(r, { ok: true, patient_id: '900' });
   assert.deepEqual(f.calls, ['GET /patient/potentialDuplicates', 'GET /settings/patient/billingType',
-    'GET /bootstrap/location', 'POST /patient', 'GET /patient/900']);
+    'GET /bootstrap/location', 'GET /patient/chartNumber/generate', 'POST /patient/', 'GET /patient/900']);
 });
 
 test('the same name and date of birth comes back as the existing patient and nothing is created', async () => {
@@ -65,7 +74,7 @@ test('the same name and date of birth comes back as the existing patient and not
   assert.equal(r.ok, false);
   assert.equal(r.duplicate, true);
   assert.equal(r.existing.patient_id, '42');
-  assert.ok(!f.calls.includes('POST /patient'));
+  assert.ok(!f.calls.includes('POST /patient/'));
 });
 
 test('a similar patient with another date of birth is not a duplicate', async () => {
@@ -80,7 +89,7 @@ test('refusals and errors, as the sim gives them, before anything is written', a
   assert.deepEqual(await createPatient(f.s, { ...TEST, phone: '555-1111' }, TODAY), { ok: false, error: 'phone must have 10 digits' });
   assert.deepEqual(await createPatient(f.s, { ...TEST, date_of_birth: '01/01/1980' }, TODAY),
     { ok: false, error: 'date_of_birth must be YYYY-MM-DD' });
-  assert.ok(!f.calls.includes('POST /patient'));
+  assert.ok(!f.calls.includes('POST /patient/'));
 });
 
 test('a read-back that differs is not success, and names the field', async () => {
@@ -94,11 +103,11 @@ test('a read-back that differs is not success, and names the field', async () =>
 test('more than one location stops before any write', async () => {
   const f = fakeAscend({ locations: 2 });
   assert.deepEqual(await createPatient(f.s, TEST, TODAY), { ok: false, error: 'expected one Ascend location, found 2' });
-  assert.ok(!f.calls.includes('POST /patient'));
+  assert.ok(!f.calls.includes('POST /patient/'));
 });
 
 test('readBackDiff ignores fields Ascend fills in itself', () => {
-  const sent: any = newPatientBody(TEST, [1980, 1, 1], { billingType: 8, location: 500 });
+  const sent: any = newPatientBody(TEST, [1980, 1, 1], { billingType: 8, location: 500, chartNumber: 'TT1' });
   const got = { ...structuredClone(sent), id: 900, status: 'ACTIVE', chartNumber: 'X1',
     patientAddress: { ...sent.patientAddress, id: 3, address2: null } };
   assert.deepEqual(readBackDiff(sent, got), []);

@@ -5,8 +5,11 @@
 //
 // Ascend's calls (doc ascend-internal-calls-map 8.2, 8.8.4 item 6; Ascend's app code, read 2026-11-19):
 // - GET /patient/potentialDuplicates?firstName&lastName&dateOfBirth (the form sends the date as typed, MM/DD/YYYY);
-// - POST /patient with the form's fields: dateOfBirth is epoch ms at UTC midnight, phones[].number 10 digits,
-//   state 2 letters, the default billing type and the one location (read at call time, never hard-coded);
+// - GET /patient/chartNumber/generate?firstName&lastName for the chart number, as the form does;
+// - POST /patient/ with exactly the body Ascend's own form sends (caught, with the request aborted, from the form
+//   filled with Test Testerson at 16:02 ET 2026-11-19; test/patients.test.ts holds it): dateOfBirth epoch ms at UTC
+//   midnight, phones[].number 10 digits, state 2 letters, the default billing type and the one location (read at
+//   call time, never hard-coded). A body without the form's empty lists and chart number got HTTP 500;
 // - GET /patient/{id} to read the record back before reporting success (decision 1174).
 // Nothing here prints or keeps patient data; errors carry field names, never values.
 import type { Reply } from './session.ts';
@@ -49,21 +52,28 @@ export function ageOn([y, m, d]: [number, number, number], today: string): numbe
   return ty - y - (tm < m || (tm === m && td < d) ? 1 : 0);
 }
 
-export function newPatientBody(p: NewPatient, born: [number, number, number], ids: { billingType: number; location: number }) {
+export function newPatientBody(p: NewPatient, born: [number, number, number],
+    ids: { billingType: number; location: number; chartNumber: string }) {
+  const first = p.first_name.trim();
+  const last = p.last_name.trim();
+  const address: Record<string, string> = {};
+  if (p.street?.trim()) address.address1 = p.street.trim();
+  if (p.city?.trim()) address.city = p.city.trim();
+  if (p.state?.trim()) address.state = p.state.trim().toUpperCase();
+  if (p.zip?.trim()) address.postalCode = p.zip.trim();
   const body: Record<string, unknown> = {
-    firstName: p.first_name.trim(), lastName: p.last_name.trim(), dateOfBirth: dobEpoch(born), status: 'NEW',
-    isDuplicated: false, chartNumberGenerationUnavailable: false, languageType: 'ENGLISH', contactMethod: 'CALL_ME',
-    patientAmount: 100, paymentUnit: 'PERCENT', povertyLevel: 100, races: [], patientMedicalAlerts: [],
-    billingType: { id: ids.billingType }, billingTypes: [{ id: ids.billingType }],
-    preferredLocation: { id: ids.location },
     phones: [{ sequence: 1, type: 'MOBILE', number: digits(p.phone) }],
-    patientAddress: {
-      address1: p.street?.trim() || undefined, city: p.city?.trim() || undefined,
-      state: p.state?.trim().toUpperCase() || undefined, postalCode: p.zip?.trim() || undefined,
-    },
+    referredPatients: [], relationships: { primaryContact: {} }, patientInsurancePlans: [], patientMedicalAlerts: [],
+    patientConnectionNotes: [], relatedPatients: [], preferredDays: {}, preferredTimes: {},
+    preferredLocation: { id: ids.location }, firstName: first, lastName: last,
   };
   if (p.gender) body.gender = p.gender === 'female' ? 'F' : 'M';
-  if (p.email?.trim()) body.primaryEmail = { address: p.email.trim() };
+  Object.assign(body, {
+    dateOfBirth: dobEpoch(born), status: 'NEW', isDuplicated: false, chartNumberGenerationUnavailable: false,
+    patientAddress: address, primaryEmail: p.email?.trim() ? { address: p.email.trim() } : {},
+    languageType: 'ENGLISH', contactMethod: 'CALL_ME', patientAmount: 100, paymentUnit: 'PERCENT', povertyLevel: 100,
+    races: [], billingType: { id: ids.billingType }, chartNumber: ids.chartNumber, displayFullName: `${first} ${last}`,
+  });
   return body;
 }
 
@@ -115,8 +125,13 @@ export async function createPatient(s: Caller, p: NewPatient, today: string): Pr
   if (!billingType) return { ok: false, error: 'Ascend has no default billing type' };
   if (locs.length !== 1) return { ok: false, error: `expected one Ascend location, found ${locs.length}` };
 
-  const body = newPatientBody(p, born, { billingType, location: locs[0].id });
-  const made = await s.call('POST', '/patient', body);
+  const cq = new URLSearchParams({ firstName: p.first_name.trim(), lastName: p.last_name.trim() });
+  const cn = (await s.call('GET', `/patient/chartNumber/generate?${cq}`)).json as any;
+  const chartNumber = typeof cn === 'string' ? cn : cn?.chartNumber;
+  if (!chartNumber) return { ok: false, error: 'Ascend did not generate a chart number' };
+
+  const body = newPatientBody(p, born, { billingType, location: locs[0].id, chartNumber });
+  const made = await s.call('POST', '/patient/', body);
   const j = made.json as any;
   const id = typeof j === 'number' ? j : j?.patientId ?? j?.id;
   if (!id) return { ok: false, error: 'Ascend did not return the new patient id' };
