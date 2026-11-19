@@ -6,6 +6,7 @@
 // until then it answers "not built yet".
 import { readFileSync } from 'node:fs';
 import { TZ } from './config.ts';
+import { book, findOpenTimes } from './booking.ts';
 import { createPatient, type Caller, type NewPatient } from './patients.ts';
 
 export type Tool = { name: string; description: string; inputSchema: Record<string, unknown> };
@@ -44,6 +45,8 @@ export const HANDLERS = new Map<string, Handler>([
 // Switch on the Ascend tools that are built and proven, over the one signed-in session.
 export function useAscend(s: Caller): void {
   HANDLERS.set('create_patient', async (a) => createPatient(s, a as unknown as NewPatient, practiceNow().slice(0, 10)));
+  HANDLERS.set('find_open_times', async (a) => findOpenTimes(s, a));
+  HANDLERS.set('book', async (a) => book(s, a));
 }
 
 export async function callTool(name: string, args: Record<string, unknown>, meta: { caller_id?: string } = {}):
