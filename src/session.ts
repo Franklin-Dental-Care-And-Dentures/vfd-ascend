@@ -28,6 +28,20 @@ const SIGNED_IN_PATH = /^\/(pm|landing)(\/|$)/;
 const LOGIN_PATH = /^\/login(\/|$)/;
 
 export const pathOnly = (p: string) => p.split('?')[0];
+
+// Send the password page. Ascend's own /login form has a #send button. Henry Schein's sign-in page (Auth0 Universal
+// Login, which Ascend handed the password step to by 15:28 ET 2026-11-19) has no #send and two submit buttons named
+// "action": the first is a hidden default button with pointer-events none, so clicking the first visible submit hangs
+// (TEST 51373). Enter in the password field submits either form once, through the form's own default button.
+export async function submitPassword(page: Page): Promise<void> {
+  const send = page.locator('#send:visible');
+  if (await send.count()) {
+    await send.first().click({ timeout: 10000 });
+    return;
+  }
+  await page.locator('input[type="password"]:visible').first().press('Enter', { timeout: 10000 });
+}
+
 const firstLine = (e: unknown) => String((e as Error)?.message ?? e).split('\n')[0].slice(0, 200);
 
 export class AscendSession {
@@ -152,9 +166,11 @@ export class AscendSession {
     const password = page.locator('#password');
     await password.waitFor({ state: 'visible', timeout: 20000 });
     await password.fill(readFileSync(PASS_FILE, 'utf8').trim());
-    await page.click('#send');
+    const submittedOn = this.#where().host;
+    await submitPassword(page);
     // Where the sign-in ends: the app, a code prompt, an error on a sign-in page, or nothing within a minute.
-    let authPasswordSent = false;
+    // A password already sent on Henry Schein's page is never typed and sent there a second time.
+    let authPasswordSent = submittedOn === AUTH_HOST;
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
       await page.waitForTimeout(500);
@@ -174,8 +190,8 @@ export class AscendSession {
             await name.fill(readFileSync(USER_FILE, 'utf8').trim());
           }
           await pw.fill(readFileSync(PASS_FILE, 'utf8').trim());
-          await page.locator('button[type="submit"]:visible').first().click();
           authPasswordSent = true;
+          await submitPassword(page);
         }
       }
     }
