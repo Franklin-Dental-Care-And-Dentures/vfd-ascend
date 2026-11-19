@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { alert } from './alert.ts';
-import { ALLOWED_HOSTS, AUTH_HOST, BASE, LIVE_HOST, ORGANIZATION, PASS_FILE, TZ, USER_FILE } from './config.ts';
+import { ALLOWED_HOSTS, AUTH_HOST, BASE, LIVE_HOST, LOGIN_URL, ORGANIZATION, PASS_FILE, TZ, USER_FILE } from './config.ts';
 import type { SignInGuard } from './guard.ts';
 
 export class SignInRefused extends Error {}
@@ -156,7 +156,7 @@ export class AscendSession {
 
   async #steps(): Promise<[Outcome, string]> {
     const page = this.page!;
-    await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
     let u = this.#where();
     if (u.host === LIVE_HOST && SIGNED_IN_PATH.test(u.pathname)) return ['ok', 'already signed in'];
     if (!(u.host === LIVE_HOST && LOGIN_PATH.test(u.pathname))) return ['stuck', `sign-in page not found; at ${u.host}${u.pathname}`];

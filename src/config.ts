@@ -4,6 +4,9 @@
 export const LIVE_HOST = 'live19.dentrixascend.com';
 export const AUTH_HOST = 'auth.henryscheinone.com';
 export const BASE = `https://${LIVE_HOST}`;
+// Where a sign-in starts: the address the office signs in from (Dewayne, 15:37 ET 2026-11-19). It lands on the
+// dashboard; Continue then goes to Henry Schein's password page (auth.henryscheinone.com/u/login).
+export const LOGIN_URL = `${BASE}/login#/dashboard`;
 export const ORGANIZATION = 'FranklinDental';
 export const TZ = 'America/New_York';
 
