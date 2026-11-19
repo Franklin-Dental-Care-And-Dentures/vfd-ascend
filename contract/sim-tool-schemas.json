@@ -1,0 +1,379 @@
+{
+ "source": "vfd-agent branch vida-sayback commit e1c062f, sim/spec_sim.py TOOL_SCHEMAS (exported 2026-11-19)",
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "find_patient",
+    "description": "Look up an existing patient. Give at least two of: full name (first and last), date of birth, phone. A record matches when two of them match.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "first_name": {
+       "type": "string"
+      },
+      "last_name": {
+       "type": "string"
+      },
+      "date_of_birth": {
+       "type": "string",
+       "description": "YYYY-MM-DD"
+      },
+      "phone": {
+       "type": "string",
+       "description": "10 digits"
+      }
+     },
+     "required": [],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "strike_count",
+    "description": "A patient's strikes (No Show and Broken), the count in force and whether booking is refused. 12 months with no new strike is a clean slate.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "patient_id": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "patient_id"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "find_open_times",
+    "description": "Openings the rules allow for a visit, the one to offer first at the top. in_pain: a registered patient in pain (a Limited visit, days 0 to 6).",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "visit_kind": {
+       "type": "string",
+       "enum": [
+        "new_patient",
+        "limited",
+        "filling",
+        "extraction",
+        "cleaning",
+        "srp",
+        "crown",
+        "partial",
+        "denture",
+        "seat",
+        "delivery"
+       ]
+      },
+      "patient_id": {
+       "type": "string"
+      },
+      "phone": {
+       "type": "string",
+       "description": "the caller's phone, for a caller not registered yet"
+      },
+      "in_pain": {
+       "type": "boolean",
+       "default": false
+      },
+      "day": {
+       "type": "string",
+       "description": "YYYY-MM-DD, only if the caller asked for a day"
+      },
+      "time_of_day": {
+       "type": "string",
+       "enum": [
+        "morning",
+        "afternoon"
+       ]
+      }
+     },
+     "required": [
+      "visit_kind"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "book",
+    "description": "Book a visit at an opening find_open_times returned.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "patient_id": {
+       "type": "string"
+      },
+      "start": {
+       "type": "string",
+       "description": "YYYY-MM-DDTHH:MM, Eastern"
+      },
+      "visit_kind": {
+       "type": "string",
+       "enum": [
+        "new_patient",
+        "limited",
+        "filling",
+        "extraction",
+        "cleaning",
+        "srp",
+        "crown",
+        "partial",
+        "denture",
+        "seat",
+        "delivery"
+       ]
+      },
+      "in_pain": {
+       "type": "boolean",
+       "default": false
+      }
+     },
+     "required": [
+      "patient_id",
+      "start",
+      "visit_kind"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "cancel",
+    "description": "Cancel a visit. 24 hours' notice or more = Canceled by Office; under 24 hours = Broken, a strike, and needs caller_confirmed=true after the caller has heard the policy and their strike count.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "appointment_id": {
+       "type": "string"
+      },
+      "caller_confirmed": {
+       "type": "boolean",
+       "default": false
+      }
+     },
+     "required": [
+      "appointment_id"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "reschedule",
+    "description": "Move a visit to a new opening; the visit kind stays. The old visit follows the same notice rule as cancel.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "appointment_id": {
+       "type": "string"
+      },
+      "new_start": {
+       "type": "string",
+       "description": "YYYY-MM-DDTHH:MM, Eastern"
+      },
+      "caller_confirmed": {
+       "type": "boolean",
+       "default": false
+      }
+     },
+     "required": [
+      "appointment_id",
+      "new_start"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "set_status",
+    "description": "Mark a visit Confirmed when the caller confirms it. Every other status is set by the connector's own rules.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "appointment_id": {
+       "type": "string"
+      },
+      "status": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "appointment_id",
+      "status"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "note_on_appointment",
+    "description": "Put a note on a visit: the caller's words about what is going on (a Limited visit), or that the caller is running late.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "appointment_id": {
+       "type": "string"
+      },
+      "note": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "appointment_id",
+      "note"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "create_patient",
+    "description": "Register a new patient. The duplicate check runs first; a match comes back as the existing patient and nothing is created.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "first_name": {
+       "type": "string"
+      },
+      "last_name": {
+       "type": "string"
+      },
+      "date_of_birth": {
+       "type": "string"
+      },
+      "gender": {
+       "type": "string",
+       "enum": [
+        "female",
+        "male"
+       ]
+      },
+      "street": {
+       "type": "string"
+      },
+      "city": {
+       "type": "string"
+      },
+      "state": {
+       "type": "string"
+      },
+      "zip": {
+       "type": "string"
+      },
+      "phone": {
+       "type": "string"
+      },
+      "email": {
+       "type": "string"
+      },
+      "plan": {
+       "type": "string",
+       "enum": [
+        "caresource",
+        "humana",
+        "amerihealth",
+        "buckeye",
+        "molina",
+        "other"
+       ]
+      }
+     },
+     "required": [
+      "first_name",
+      "last_name",
+      "date_of_birth",
+      "phone"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "send_forms",
+    "description": "Send the new-patient forms to the patient just registered.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "patient_id": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "patient_id"
+     ],
+     "additionalProperties": false
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "leave_note",
+    "description": "Leave a message for the office. category is empty for a message with no category.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "category": {
+       "type": "string",
+       "enum": [
+        "dentist_prescription",
+        "dentist_procedure_question",
+        "dentist_other",
+        "front_desk_waiting_on_work",
+        "front_desk_records",
+        "front_desk_wants_person",
+        "front_desk_other",
+        "crown_partial_denture_request",
+        "cleaning_or_srp_request",
+        "whitening",
+        "doctor_callback_no_limited_slot",
+        "lab_case",
+        "no_opening",
+        "self_pay_offer_declined",
+        ""
+       ]
+      },
+      "message": {
+       "type": "string"
+      },
+      "caller_name": {
+       "type": "string"
+      },
+      "phone": {
+       "type": "string"
+      },
+      "patient_id": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "message"
+     ],
+     "additionalProperties": false
+    }
+   }
+  }
+ ]
+}
