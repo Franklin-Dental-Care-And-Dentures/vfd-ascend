@@ -1,7 +1,7 @@
 // find_open_times and book (New Patient exam) against a fake Ascend: the sim's rules, and the read-back.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { book, findOpenTimes, local, midnight, offerable, type Slot } from '../src/booking.ts';
+import { book, findOpenTimes, local, midnight, newAppointment, offerable, type Slot } from '../src/booking.ts';
 import type { Caller } from '../src/patients.ts';
 
 const NOW = Date.parse('2026-11-19T21:00:00Z');   // Thu 2026-11-19 16:00 Eastern
@@ -84,6 +84,14 @@ test('book: the slot the opening came from, the form\'s shape, then read back', 
   assert.equal(b.appointment.endDateTime - b.appointment.startDateTime, 1800000);
   assert.deepEqual([b.appointment.provider, b.appointment.operatory, b.appointment.location], [{ id: 2 }, { id: 50 }, { id: 700 }]);
   assert.equal(b.appointment.status, 'UNCONFIRMED');
+});
+
+// What Ascend's own Appointment model sent for a new New Patient visit (toJSON in the signed-in page, 16:20 ET).
+const MODEL_JSON = {"startDateTime":1796149800000,"endDateTime":1796151600000,"duration":30,"provider":{"id":19000000026581},"operatory":{"id":19000000006656},"location":{"id":19000000000764},"patient":{"id":19000015200389},"patientLite":{"id":19000015200389},"id":"NEW","title":"Appointment","status":"UNCONFIRMED","procedures":[],"patientProcedures":[],"visits":[],"isAppointmentEmpty":false,"dueDates":[],"missedAppointments":[],"isLabCaseEnabled":false};
+
+test("the visit is exactly what Ascend's own Appointment model sends", () => {
+  const sl: Slot = { start: 1796149800000, end: 1796151600000, operatory: { id: 19000000006656 }, provider: { id: 19000000026581 } };
+  assert.deepEqual(newAppointment(sl, 19000000000764, 19000015200389), MODEL_JSON);
 });
 
 test('book refuses an opening the rules do not allow, and waits on the strike count for a patient with history', async () => {

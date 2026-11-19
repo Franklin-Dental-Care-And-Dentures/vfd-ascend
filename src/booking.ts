@@ -7,7 +7,7 @@
 // Ascend's calls: GET /bootstrap/operatory and /bootstrap/provider (ids, read at call time), GET
 // /v3/availableAppointments (dates as epoch ms, lists comma-joined, as Ascend's Search for Openings sends them),
 // POST /appointmentREST/appointmentWithPatientLite with { isAppointmentEmpty, appointment, patient, primaryContact }
-// (the shape Ascend's appointment editor saves), then GET /appointmentREST?patientId to read the visit back.
+// (the shape Ascend's appointment editor saves; appointment = the Appointment model's own toJSON), then GET /appointmentREST?patientId to read the visit back.
 // Other visit kinds, and booking a patient who has any visit history (the strike count is not built yet), answer
 // "not built yet". Nothing here prints or keeps patient data.
 import type { Caller } from './patients.ts';
@@ -93,6 +93,16 @@ async function openings(s: Caller, kind: string, nowMs: number) {
   return found;
 }
 
+export function newAppointment(slot: Slot, location: number, patient: number) {
+  return {
+    startDateTime: slot.start, endDateTime: slot.start + DURATION * 60000, duration: DURATION,
+    provider: { id: slot.provider.id }, operatory: { id: slot.operatory.id }, location: { id: location },
+    patient: { id: patient }, patientLite: { id: patient }, id: 'NEW', title: 'Appointment', status: 'UNCONFIRMED',
+    procedures: [], patientProcedures: [], visits: [], isAppointmentEmpty: false, dueDates: [], missedAppointments: [],
+    isLabCaseEnabled: false,
+  };
+}
+
 const notBuilt = (what: string) => ({ ok: false, error: `${what} is not built yet in the Ascend link` });
 
 export async function findOpenTimes(s: Caller, a: Record<string, any>, nowMs = Date.now()): Promise<Record<string, unknown>> {
@@ -121,15 +131,9 @@ export async function book(s: Caller, a: Record<string, any>, nowMs = Date.now()
   const loc = ((await s.call('GET', '/bootstrap/location')).json as any[]) ?? [];
   if (loc.length !== 1) return { ok: false, error: `expected one Ascend location, found ${loc.length}` };
   const slot = match.slot;
-  const appointment = {
-    startDateTime: slot.start, endDateTime: slot.start + DURATION * 60000, duration: DURATION,
-    provider: { id: slot.provider.id }, operatory: { id: slot.operatory.id }, location: { id: loc[0].id },
-    status: 'UNCONFIRMED', confirmed: null, needsFollowup: false, ASAP: false, needsPremedicate: false, pinned: false,
-    bookedOnline: false, note: '', other: '', title: '', reason: '', productionAmount: 0,
-    patient: { id: p.id }, patientLite: { id: p.id }, patientId: p.id,
-    visits: [], patientProcedures: [], procedures: [], communications: [], dueDates: [], missedAppointments: [],
-    isPatientFailed: false, isLabCaseEnabled: false, isAppointmentEmpty: false,
-  };
+  // Exactly what Ascend's own Appointment model sends for a new visit (its toJSON, read in the signed-in page at
+  // 16:20 ET 2026-11-19): a fuller body with the read-only flags got HTTP 500 and saved nothing.
+  const appointment = newAppointment(slot, loc[0].id, p.id);
   const body = { isAppointmentEmpty: false, appointment, patient: { id: p.id },
     primaryContact: { id: p.relationships?.primaryContact?.id ?? p.id } };
   await s.call('POST', '/appointmentREST/appointmentWithPatientLite', body);
