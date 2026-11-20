@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { TZ } from './config.ts';
 import { book, findOpenTimes } from './booking.ts';
-import { cancel, confirm, reschedule } from './changes.ts';
+import { cancel, confirm, noteOnAppointment, reschedule } from './changes.ts';
 import { findPatient, strikeCount } from './lookup.ts';
 import { createPatient, type Caller, type NewPatient } from './patients.ts';
 
@@ -54,6 +54,7 @@ export function useAscend(s: Caller): void {
   HANDLERS.set('cancel', async (a) => cancel(s, a));
   HANDLERS.set('reschedule', async (a) => reschedule(s, a));
   HANDLERS.set('set_status', async (a) => confirm(s, a));
+  HANDLERS.set('note_on_appointment', async (a) => noteOnAppointment(s, a));
 }
 
 export async function callTool(name: string, args: Record<string, unknown>, meta: { caller_id?: string } = {}):

@@ -9,13 +9,15 @@
 //   opening the rules allow for the kind. The link moves only a visit it would book itself (its column and length are
 //   one of the four bookable kinds); anything else is refused, for a message to the front desk. The new visit is saved
 //   and read back before the old one is closed, so a failed save never leaves the caller with no visit;
-// - set_status: Confirmed only; a visit with a lab case is not confirmed until the case is in (2.2.4).
+// - set_status: Confirmed only; a visit with a lab case is not confirmed until the case is in (2.2.4);
+// - note_on_appointment: the caller's words added to the visit's note, after any note already there, marked as
+//   Vida's; the same save as a status write with only the note changed, then read back.
 // Ascend: GET /appointmentREST/{id} (the visit, with patientId and labCase when one is attached), then the status
 // write of status.ts. Nothing here prints or keeps patient data.
 import { KINDS, local, openings, place } from './booking.ts';
 import { COUNT_FROM, STRIKES_REFUSE, strikeDates, strikesInForce } from './lookup.ts';
 import type { Caller } from './patients.ts';
-import { setStatus } from './status.ts';
+import { existingAppointmentJson, setStatus } from './status.ts';
 
 export const NOTICE_HOURS = 24;
 const UPCOMING: Record<string, string> = { UNCONFIRMED: 'Scheduled', CONFIRMED: 'Confirmed' };
@@ -100,4 +102,23 @@ export async function confirm(s: Caller, a: Record<string, any>, nowMs = Date.no
   if (v.labCase) return refuse('a visit that waits on the lab is not confirmed until the case is in (2.2.4)');
   const r = await setStatus(s, patientOf(v), String(v.id), 'CONFIRMED', '', nowMs);
   return r.ok ? { ok: true, status: 'Confirmed' } : r;
+}
+
+export const NOTE_MARK = 'Vida: ';
+
+export async function noteOnAppointment(s: Caller, a: Record<string, any>): Promise<Record<string, unknown>> {
+  const { v, err } = await visit(s, String(a.appointment_id ?? ''));
+  if (err) return err;
+  const words = String(a.note ?? '').trim();
+  if (!words) return { ok: false, error: 'note is empty' };
+  const note = `${v.note ? `${v.note}\n` : ''}${NOTE_MARK}${words}`;
+  const pid = patientOf(v);
+  const p = (await s.call('GET', `/patient/${pid}`)).json as any;
+  await s.call('POST', '/appointmentREST/appointmentWithPatientLite', { isAppointmentEmpty: false,
+    appointment: { ...existingAppointmentJson(v), note }, patient: { id: Number(pid) },
+    primaryContact: { id: p?.relationships?.primaryContact?.id ?? Number(pid) } });
+  const back = (await s.call('GET', `/appointmentREST/${v.id}`)).json as any;
+  if (back?.note !== note) return { ok: false, error: 'saved, but the note was not found on read-back' };
+  if (back?.status !== v.status) return { ok: false, error: 'saved, but the visit status changed on read-back' };
+  return { ok: true };
 }

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { midnight } from '../src/booking.ts';
-import { cancel, confirm, kindOf, reschedule } from '../src/changes.ts';
+import { cancel, confirm, kindOf, noteOnAppointment, reschedule } from '../src/changes.ts';
 import type { Caller } from '../src/patients.ts';
 
 const NOW = Date.parse('2026-11-19T21:00:00Z');   // Thu 2026-11-19 16:00 Eastern
@@ -50,8 +50,9 @@ function fake(opts: { strikes?: number } = {}) {
         const a = body.appointment;
         if (a.id === 'NEW') { n += 1; visits.set(n, { ...a, id: n, patientId: 900 }); writes.push(`new ${n} op ${a.operatory.id} ${a.duration} min`); }
         else {
-          visits.set(a.id, { ...visits.get(a.id), status: a.status });
-          writes.push(`status ${a.id} ${a.status}`);
+          const was = visits.get(a.id);
+          visits.set(a.id, { ...was, status: a.status, ...(a.note !== undefined ? { note: a.note } : {}) });
+          writes.push(a.note !== was.note ? `note ${a.id}` : `status ${a.id} ${a.status}`);
           if (body.missedAppointment) missed.push({ id: 100 + missed.length, appointmentId: a.id, status: a.status, startDateTime: a.startDateTime });
         }
         return { status: 200, json: {} };
@@ -135,4 +136,17 @@ test('set_status: Confirmed only, and not while a lab case is attached', async (
     { ok: false, refused: true, reason: 'the agent may only set Confirmed' });
   assert.deepEqual(await confirm(f.s, { appointment_id: '75', status: 'Confirmed' }, NOW),
     { ok: false, refused: true, reason: 'a visit that waits on the lab is not confirmed until the case is in (2.2.4)' });
+});
+
+test('note_on_appointment: the caller\'s words after any note there, marked as Vida\'s, status unchanged', async () => {
+  const f = fake();
+  assert.deepEqual(await noteOnAppointment(f.s, { appointment_id: '72', note: 'Pain lower left since Monday.' }), { ok: true });
+  assert.equal(f.visits.get(72).note, 'Vida: Pain lower left since Monday.');
+  assert.deepEqual(await noteOnAppointment(f.s, { appointment_id: '72', note: 'Running 10 minutes late.' }), { ok: true });
+  assert.equal(f.visits.get(72).note, 'Vida: Pain lower left since Monday.\nVida: Running 10 minutes late.');
+  assert.equal(f.visits.get(72).status, 'UNCONFIRMED');
+  assert.deepEqual(f.writes, ['note 72', 'note 72']);
+  assert.deepEqual(await noteOnAppointment(f.s, { appointment_id: '72', note: '  ' }), { ok: false, error: 'note is empty' });
+  assert.deepEqual(await noteOnAppointment(f.s, { appointment_id: '73', note: 'x' }),
+    { ok: false, refused: true, reason: 'the visit is No Show, not an upcoming visit' });
 });
