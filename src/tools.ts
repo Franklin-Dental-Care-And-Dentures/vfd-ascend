@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { TZ } from './config.ts';
 import { book, findOpenTimes } from './booking.ts';
 import { cancel, confirm, noteOnAppointment, reschedule } from './changes.ts';
+import { sendForms, type FormPoster } from './forms.ts';
 import { findPatient, strikeCount } from './lookup.ts';
 import { createPatient, type Caller, type NewPatient } from './patients.ts';
 
@@ -45,7 +46,7 @@ export const HANDLERS = new Map<string, Handler>([
 ]);
 
 // Switch on the Ascend tools that are built and proven, over the one signed-in session.
-export function useAscend(s: Caller): void {
+export function useAscend(s: Caller & FormPoster): void {
   HANDLERS.set('create_patient', async (a) => createPatient(s, a as unknown as NewPatient, practiceNow().slice(0, 10)));
   HANDLERS.set('find_open_times', async (a) => findOpenTimes(s, a));
   HANDLERS.set('book', async (a) => book(s, a));
@@ -55,6 +56,7 @@ export function useAscend(s: Caller): void {
   HANDLERS.set('reschedule', async (a) => reschedule(s, a));
   HANDLERS.set('set_status', async (a) => confirm(s, a));
   HANDLERS.set('note_on_appointment', async (a) => noteOnAppointment(s, a));
+  HANDLERS.set('send_forms', async (a) => sendForms(s, a));
 }
 
 export async function callTool(name: string, args: Record<string, unknown>, meta: { caller_id?: string } = {}):

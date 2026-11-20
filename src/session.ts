@@ -245,6 +245,35 @@ export class AscendSession {
     return run;
   }
 
+  // One form post through the signed-in browser (application/x-www-form-urlencoded, as jQuery sends a plain-object
+  // body); the reply as text. Same chain, sign-in retry and errors as call().
+  form(path: string, fields: Record<string, string>): Promise<{ status: number; text: string }> {
+    const run = this.#chain.then(() => this.#form(path, fields, true));
+    this.#chain = run.catch(() => {});
+    return run;
+  }
+
+  async #form(path: string, fields: Record<string, string>, mayRetry: boolean): Promise<{ status: number; text: string }> {
+    await this.ensureSignedIn();
+    const res = await this.context!.request.fetch(BASE + path, {
+      method: 'POST',
+      headers: {
+        'x-csrf-token': this.csrf, 'x-requested-with': 'XMLHttpRequest', referer: BASE + '/pm',
+        accept: '*/*', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      },
+      data: new URLSearchParams(fields).toString(), maxRedirects: 0, timeout: 20000, failOnStatusCode: false,
+    });
+    const status = res.status();
+    if ((status === 302 || status === 401) && mayRetry) {
+      this.#forget(false);
+      await this.signIn();
+      return this.#form(path, fields, false);
+    }
+    if (status >= 300) throw new AscendHttpError('POST', path, status);
+    this.lastCallAt = new Date();
+    return { status, text: await res.text() };
+  }
+
   async #call(method: Method, path: string, body: unknown, mayRetry: boolean): Promise<Reply> {
     await this.ensureSignedIn();
     const headers: Record<string, string> = {
