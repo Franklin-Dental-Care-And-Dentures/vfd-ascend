@@ -82,7 +82,7 @@ async function card(s: Caller, r: any, nowMs: number) {
     phone: r.phone ? digits(r.phone) : null, insurance: cov.insurance, other_coverage: cov.other_coverage,
     upcoming: visits.map((v) => { const t = local(v.startDateTime); const col = cols.get(v.operatory?.id) ?? '';
       return { id: String(v.id), start: `${t.date}T${t.time}`, visit_kind: KIND_BY_COLUMN[col] ?? null, column: col,
-        status: UPCOMING[v.status], lab: false }; }),
+        status: UPCOMING[v.status], lab: Boolean(v.labCase) }; }),
     treatment_plan: [], due: null, not_read: ['treatment_plan', 'due'],
   };
 }

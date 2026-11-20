@@ -112,7 +112,7 @@ async function slotsBetween(s: Caller, col: Column, from: string, to: string): P
 }
 
 // The openings for a visit kind; a New Patient exam's on Dr. Taj's first, any open doctor's only when she has none.
-async function openings(s: Caller, kind: string, inPain: boolean, nowMs: number) {
+export async function openings(s: Caller, kind: string, inPain: boolean, nowMs: number) {
   const col = await columnAndDoctors(s, kind);
   if (col.preferred !== undefined) {
     const hers = await search(s, { ...col, providers: [col.preferred] }, kind, inPain, nowMs);
