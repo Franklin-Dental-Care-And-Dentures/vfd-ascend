@@ -1,0 +1,22 @@
+# The Vida Ascend link (repo vfd-ascend). Installed as /etc/systemd/system/vfd-ascend.service on CT 115.
+[Unit]
+Description=Vida Ascend link: signed-in Ascend session and the tool server Vida dials
+After=network-online.target npreg-xvfb.service
+Wants=network-online.target
+Requires=npreg-xvfb.service
+
+[Service]
+User=npreg
+Group=npreg
+WorkingDirectory=/opt/vfd-ascend
+Environment=DISPLAY=:99
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+Environment=VFD_ASCEND_LISTEN=127.0.0.1
+Environment=VFD_ASCEND_PORT=8795
+ExecStart=/usr/bin/node /opt/vfd-ascend/src/main.ts
+Restart=on-failure
+RestartSec=60
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

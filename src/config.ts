@@ -26,3 +26,9 @@ export const ALLOWED_HOSTS = new Set([LIVE_HOST, AUTH_HOST, 'cdn.auth0.com', 'ap
 export const RETRY_AFTER_MS = 15 * 60 * 1000;
 export const FAILS_PER_DAY = 3;
 export const FAILS_IN_A_ROW_TO_STOP = 2;
+
+// The service (deploy/vfd-ascend.service): the link key's file - this server's copy of 1Password item "Vida Ascend
+// link key", stored by pve /root/store-vfd-ascend-key.sh, never logged - and where the tool server listens.
+export const KEY_FILE = process.env.VFD_ASCEND_KEY_FILE ?? '/etc/npreg/vfd-ascend.key';
+export const LISTEN_HOST = process.env.VFD_ASCEND_LISTEN ?? '127.0.0.1';
+export const LISTEN_PORT = Number(process.env.VFD_ASCEND_PORT ?? 8795);
