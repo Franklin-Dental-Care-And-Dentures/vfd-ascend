@@ -1,53 +1,63 @@
 // send_forms against a fake Ascend: only to the patient just registered; a text when the mobile takes texts, else
-// an email, else nothing (decisions 1063, 1794, 1492).
+// an email, else nothing (decisions 1063, 1794, 1492); Ascend's current send: the forms link, then /v2/form/send.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { channelOf, NO_FORMS_DUE, sendForms } from '../src/forms.ts';
+import { channelOf, sendForms } from '../src/forms.ts';
 
-const rec = (phones: any[], email = '') => ({ id: 900, phones, primaryEmail: email ? { address: email } : {} });
-const mob = (number: string, sms: string, sequence = 1) => ({ type: 'MOBILE', number, smsAuthorizationStatus: sms, sequence });
+const rec = (phones: any[], email = '') => ({ id: 900, phones, primaryEmail: email ? { id: 77, address: email } : {} });
+const mob = (id: number, number: string, sms: string, sequence = 1) => ({ id, type: 'MOBILE', number, smsAuthorizationStatus: sms, sequence });
+const LINK = JSON.stringify({ status: 'enabled', url: 'u', smsUrl: 'su', emailUrl: 'eu', expirationDate: 1 });
 
 test('the channel: a text to a mobile that said yes, else the email, else none', () => {
-  assert.deepEqual(channelOf(rec([mob('(513) 555-1111', 'OPT_IN')], 'a@b.c')), { channelType: 'SMS', smsNumber: '5135551111' });
-  assert.deepEqual(channelOf(rec([mob('5135551111', 'OPT_OUT')], 'a@b.c')), { channelType: 'EMAIL', emailAddress: 'a@b.c' });
-  assert.deepEqual(channelOf(rec([mob('5135551111', 'INVALID')], ' a@b.c ')), { channelType: 'EMAIL', emailAddress: 'a@b.c' });
-  assert.deepEqual(channelOf(rec([{ type: 'HOME', number: '5135551111', smsAuthorizationStatus: 'OPT_IN' }])), null);
-  assert.deepEqual(channelOf(rec([mob('5135552222', 'OPT_OUT', 1), mob('5135553333', 'OPT_IN', 2)])), { channelType: 'SMS', smsNumber: '5135553333' });
+  assert.deepEqual(channelOf(rec([mob(5, '(513) 555-1111', 'OPT_IN')], 'a@b.c')), { channelType: 'SMS', phoneNumberId: 5 });
+  assert.deepEqual(channelOf(rec([mob(5, '5135551111', 'OPT_OUT')], 'a@b.c')), { channelType: 'EMAIL', emailAddressId: 77 });
+  assert.deepEqual(channelOf(rec([mob(5, '5135551111', 'INVALID')], 'a@b.c')), { channelType: 'EMAIL', emailAddressId: 77 });
+  assert.deepEqual(channelOf(rec([{ id: 6, type: 'HOME', number: '5135551111', smsAuthorizationStatus: 'OPT_IN' }])), null);
+  assert.deepEqual(channelOf(rec([mob(1, '5135552222', 'OPT_OUT', 1), mob(2, '5135553333', 'OPT_IN', 2)])), { channelType: 'SMS', phoneNumberId: 2 });
   assert.equal(channelOf(rec([])), null);
 });
 
-function fake(record: any, reply: string) {
-  const posts: { path: string; fields: Record<string, string> }[] = [];
+function fake(record: any, link: string | Error, sent: any = { success: true }) {
+  const forms: { path: string; fields: Record<string, string> }[] = [];
+  const posts: { path: string; body: any }[] = [];
   return {
-    posts,
+    forms, posts,
     s: {
-      async call(_m: string, path: string) { return path === '/patient/900' ? { status: 200, json: record } : { status: 200, json: null }; },
-      async form(path: string, fields: Record<string, string>) { posts.push({ path, fields }); return { status: 200, text: reply }; },
+      async call(m: string, path: string, body?: unknown) {
+        if (m === 'POST') { posts.push({ path, body }); return { status: 200, json: sent }; }
+        return path === '/patient/900' ? { status: 200, json: record } : { status: 200, json: null };
+      },
+      async form(path: string, fields: Record<string, string>) {
+        forms.push({ path, fields });
+        if (link instanceof Error) throw link;
+        return { status: 200, text: link };
+      },
     },
   };
 }
 
-test('send_forms: refused for anyone the link did not just register; sent once by Ascend\'s own form', async () => {
-  const f = fake(rec([mob('5135551111', 'OPT_IN')]), '"Forms sent"');
+test("send_forms: refused for anyone the link did not just register; sent once by Ascend's own send", async () => {
+  const f = fake(rec([mob(5, '5135551111', 'OPT_IN')]), LINK);
   assert.deepEqual(await sendForms(f.s as any, { patient_id: '900' }, new Set()),
     { ok: false, refused: true, reason: 'forms go only to the patient just registered (decisions 1063, 1794)' });
-  assert.equal(f.posts.length, 0);
+  assert.equal(f.forms.length + f.posts.length, 0);
   assert.deepEqual(await sendForms(f.s as any, { patient_id: '900' }, new Set(['900'])), { ok: true, channel: 'text' });
-  assert.deepEqual(f.posts, [{ path: '/patientForm/sendFormsNow/900', fields: { origin: 'requestAllDue', channelType: 'SMS', smsNumber: '5135551111' } }]);
+  assert.deepEqual(f.forms, [{ path: '/patientForm/fetchPatientChallengeUrl/900', fields: { origin: 'requestAllDue' } }]);
+  assert.deepEqual(f.posts, [{ path: '/v2/form/send', body: { patientId: 900, url: 'su', channelType: 'SMS', phoneNumberId: 5 } }]);
+  const e = fake(rec([], 'a@b.c'), LINK);
+  assert.deepEqual(await sendForms(e.s as any, { patient_id: '900' }, new Set(['900'])), { ok: true, channel: 'email' });
+  assert.deepEqual(e.posts[0].body, { patientId: 900, url: 'eu', channelType: 'EMAIL', emailAddressId: 77 });
 });
 
-test('send_forms: no forms due, and no way to reach the patient, are errors and nothing more', async () => {
-  const none = fake(rec([], 'a@b.c'), JSON.stringify(NO_FORMS_DUE));
-  assert.deepEqual(await sendForms(none.s as any, { patient_id: '900' }, new Set(['900'])), { ok: false, error: 'no forms are due for this patient' });
-  assert.equal(none.posts[0].fields.channelType, 'EMAIL');
-  const nowhere = fake(rec([mob('5135551111', 'INVALID')]), '');
+test('send_forms: nothing due, no way to reach them, or a refused send are error results, never a throw', async () => {
+  const none = fake(rec([mob(5, '5135551111', 'OPT_IN')]), new Error('POST /patientForm/fetchPatientChallengeUrl/900: HTTP 500'));
+  assert.deepEqual(await sendForms(none.s as any, { patient_id: '900' }, new Set(['900'])),
+    { ok: false, error: 'no forms are due for this patient, or Ascend refused the forms link (HTTP 500)' });
+  assert.equal(none.posts.length, 0);
+  const nowhere = fake(rec([mob(5, '5135551111', 'INVALID')]), LINK);
   assert.deepEqual(await sendForms(nowhere.s as any, { patient_id: '900' }, new Set(['900'])),
     { ok: false, error: 'no mobile phone that takes texts and no email on the record' });
-  assert.equal(nowhere.posts.length, 0);
-});
-
-test('send_forms: an Ascend refusal is an error result, never a throw', async () => {
-  const f = { async call() { return { status: 200, json: rec([mob('5135551111', 'OPT_IN')]) }; },
-    async form() { throw new Error('POST /patientForm/sendFormsNow/900: HTTP 422'); } };
-  assert.deepEqual(await sendForms(f as any, { patient_id: '900' }, new Set(['900'])), { ok: false, error: 'Ascend did not send the forms (HTTP 422)' });
+  assert.equal(nowhere.forms.length, 0);
+  const no = fake(rec([mob(5, '5135551111', 'OPT_IN')]), LINK, { success: false });
+  assert.deepEqual(await sendForms(no.s as any, { patient_id: '900' }, new Set(['900'])), { ok: false, error: 'Ascend did not send the forms' });
 });
