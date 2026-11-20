@@ -6,12 +6,12 @@
 //   last strike-free 12 months (1751); a strike before the count-from day is not counted (1861: a setting,
 //   VFD_STRIKES_COUNT_FROM, unset = every strike counts); a strike on February 29 clears on March 1 (1868); three
 //   strikes in force block booking (1716). Ascend: GET /appointmentREST?patientId and /missedAppointment?patientIds.
-// - the card's insurance and other_coverage: from the record (insurance.ts). Card fields the link does not read yet
-//   (treatment plan, recare due) come back empty or null and are named in not_read. Nothing here prints or keeps
-//   patient data.
+// - the card's insurance and other_coverage: from the record (insurance.ts); treatment_plan and due: from the record,
+//   named by the office's own recall lists (plan.ts, decision 2197). Nothing here prints or keeps patient data.
 import { digits, dobFromEpoch, type Caller } from './patients.ts';
 import { local } from './booking.ts';
 import { coverage } from './insurance.ts';
+import { planAndDue } from './plan.ts';
 
 export const STRIKES_REFUSE = 3;
 export const COUNT_FROM = process.env.VFD_STRIKES_COUNT_FROM ?? '';
@@ -77,13 +77,14 @@ async function card(s: Caller, r: any, nowMs: number) {
     .sort((x, y) => x.startDateTime - y.startDateTime);
   const cols = new Map<number, string>(((((await s.call('GET', '/bootstrap/operatory')).json) as any[]) ?? []).map((o) => [o.id, String(o.name ?? '')]));
   const cov = await coverage(s, pid, nowMs);
+  const pd = await planAndDue(s, pid, nowMs);
   return {
     patient_id: pid, first_name: r.firstName, last_name: r.lastName, date_of_birth: dobOf(r.dateOfBirth),
     phone: r.phone ? digits(r.phone) : null, insurance: cov.insurance, other_coverage: cov.other_coverage,
     upcoming: visits.map((v) => { const t = local(v.startDateTime); const col = cols.get(v.operatory?.id) ?? '';
       return { id: String(v.id), start: `${t.date}T${t.time}`, visit_kind: KIND_BY_COLUMN[col] ?? null, column: col,
         status: UPCOMING[v.status], lab: Boolean(v.labCase) }; }),
-    treatment_plan: [], due: null, not_read: ['treatment_plan', 'due'],
+    treatment_plan: pd.treatment_plan, due: pd.due,
   };
 }
 

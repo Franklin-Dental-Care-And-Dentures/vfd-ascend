@@ -45,6 +45,13 @@ function fake(opts: { visits?: any[]; missed?: any[] } = {}) {
       if (path === '/bootstrap/operatory') return { status: 200, json: [{ id: 50, name: 'NEW PATIENTS' }, { id: 49, name: 'SRP/FILLS' }] };
       if (path === '/patientInsurancePlanREST/900') return { status: 200, json: [{ subscriberInsurancePlan: { carrierInsurancePlan: { id: 302 } } }] };
       if (path === '/patientInsurancePlanREST/901') return { status: 200, json: [] };
+      if (path === '/recare/list') return { status: 200, json: [{ type: 'Fillings', procedures: [{ adaCode: 'D2391' }] },
+        { type: 'extraction', procedures: [{ adaCode: 'D7140' }] }, { type: 'PROPHY', procedures: [{ adaCode: 'D1110' }] }] };
+      if (/^\/patient\/90[01]\/treatment2\/procedures$/.test(path)) return { status: 200, json: path.includes('900') ? [
+        { id: 2, status: 'TREATMENT_PLAN', code: 'D2391', txCaseId: null, visitId: null, appointmentId: null, serviceDate: 20 },
+        { id: 1, status: 'TREATMENT_PLAN', code: 'D7140', txCaseId: null, visitId: null, appointmentId: null, serviceDate: 10 }] : [] };
+      if (/^\/patient\/90[01]\/recare\/$/.test(path)) return { status: 200, json: path.includes('900')
+        ? [{ type: 'PROPHY', dueDate: day('2026-11-01', 23), appointmentId: null, scheduled: null }] : [] };
       if (path === '/bootstrap/insuranceCarrier') return { status: 200, json: [{ name: 'DentaQuest', carrierInsurancePlans: [{ id: 302, planName: 'Humana Healthy Horizon' }] }] };
       throw new Error(`unexpected ${method} ${path}`);
     },
@@ -52,7 +59,7 @@ function fake(opts: { visits?: any[]; missed?: any[] } = {}) {
   return { s, calls };
 }
 
-test('find_patient: two of name, birth date, phone; a card with upcoming visits and insurance; fields not read named', async () => {
+test('find_patient: two of name, birth date, phone; a card with upcoming visits and insurance; treatment plan and due', async () => {
   const f = fake({ visits: [
     { id: 7, status: 'UNCONFIRMED', startDateTime: day('2026-12-05', 14), operatory: { id: 50 } },
     { id: 8, status: 'COMPLETE', startDateTime: day('2026-10-01'), operatory: { id: 49 } },
@@ -68,7 +75,8 @@ test('find_patient: two of name, birth date, phone; a card with upcoming visits 
   assert.deepEqual(c.upcoming.map((u: any) => [u.id, u.start, u.visit_kind, u.status]),
     [['7', '2026-12-05T14:00', 'new_patient', 'Scheduled'], ['9', '2026-12-10T15:00', null, 'Confirmed']]);
   assert.deepEqual([c.insurance, c.other_coverage], ['humana', null]);
-  assert.deepEqual(c.not_read, ['treatment_plan', 'due']);
+  assert.deepEqual([c.treatment_plan, c.due], [['extraction', 'filling'], 'cleaning']);
+  assert.equal('not_read' in c, false);
   const byDob: any = await findPatient(f.s, { first_name: 'Test', last_name: 'Testerson', date_of_birth: '1980-01-01' }, NOW);
   assert.deepEqual(byDob.matches.map((m: any) => m.patient_id), ['900']);
 });
