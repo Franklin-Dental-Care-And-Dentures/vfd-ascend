@@ -209,6 +209,12 @@ test("when Dr. Taj has no opening, any open doctor's, Saturdays and Mondays firs
   assert.deepEqual(r.openings.map((o: any) => o.start), ['2026-12-01T08:30', '2026-12-03T10:00']);
 });
 
+test('a canceled visit at the same start and column is not taken for the new one on read-back', async () => {
+  const f = fakeAscend({ history: [{ id: 1, status: 'CANCELLEDBYOFF', startDateTime: at('2026-12-05', '09:00'), operatory: { id: 50 }, provider: { id: 2 }, duration: 30 }] });
+  assert.deepEqual(await book(f.s, { patient_id: '900', start: '2026-12-05T09:00', visit_kind: 'new_patient' }, NOW),
+    { ok: true, appointment_id: '4242', start: '2026-12-05T09:00', visit_kind: 'new_patient' });
+});
+
 test('a read-back that differs is not success', async () => {
   const f = fakeAscend({ mangle: (a) => { a.provider = { id: 1 }; } });
   const r: any = await book(f.s, { patient_id: '900', start: '2026-12-05T09:00', visit_kind: 'new_patient' }, NOW);

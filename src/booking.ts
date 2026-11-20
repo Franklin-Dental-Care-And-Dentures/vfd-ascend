@@ -169,10 +169,12 @@ export async function place(s: Caller, p: any, slot: Slot, minutes: number): Pro
   const appointment = newAppointment(slot, loc[0].id, p.id, minutes);
   const body = { isAppointmentEmpty: false, appointment, patient: { id: p.id },
     primaryContact: { id: p.relationships?.primaryContact?.id ?? p.id } };
+  // A canceled or missed visit stays in the list at its old start, so the new one is the row that was not there before.
+  const had = new Set(rowsOf((await s.call('GET', `/appointmentREST?patientId=${pid}`)).json).map((x) => String(x.id)));
   await s.call('POST', '/appointmentREST/appointmentWithPatientLite', body);
 
   const list = rowsOf((await s.call('GET', `/appointmentREST?patientId=${pid}`)).json);
-  const got = list.find((x) => x.startDateTime === slot.start && x.operatory?.id === slot.operatory.id);
+  const got = list.find((x) => !had.has(String(x.id)) && x.startDateTime === slot.start && x.operatory?.id === slot.operatory.id);
   if (!got) return { ok: false, error: 'saved, but the visit was not found on read-back' };
   const bad = [['provider', got.provider?.id, slot.provider.id], ['duration', got.duration, minutes],
     ['status', got.status, 'UNCONFIRMED']].filter(([, x, y]) => x !== y).map(([n]) => n);
