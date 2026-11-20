@@ -43,13 +43,16 @@ function fake(opts: { visits?: any[]; missed?: any[] } = {}) {
       if (path.startsWith('/appointmentREST?patientId=900')) return { status: 200, json: opts.visits ?? [] };
       if (path.startsWith('/missedAppointment?patientIds=900')) return { status: 200, json: opts.missed ?? [] };
       if (path === '/bootstrap/operatory') return { status: 200, json: [{ id: 50, name: 'NEW PATIENTS' }, { id: 49, name: 'SRP/FILLS' }] };
+      if (path === '/patientInsurancePlanREST/900') return { status: 200, json: [{ subscriberInsurancePlan: { carrierInsurancePlan: { id: 302 } } }] };
+      if (path === '/patientInsurancePlanREST/901') return { status: 200, json: [] };
+      if (path === '/bootstrap/insuranceCarrier') return { status: 200, json: [{ name: 'DentaQuest', carrierInsurancePlans: [{ id: 302, planName: 'Humana Healthy Horizon' }] }] };
       throw new Error(`unexpected ${method} ${path}`);
     },
   };
   return { s, calls };
 }
 
-test('find_patient: two of name, birth date, phone; a card with upcoming visits; fields not read named', async () => {
+test('find_patient: two of name, birth date, phone; a card with upcoming visits and insurance; fields not read named', async () => {
   const f = fake({ visits: [
     { id: 7, status: 'UNCONFIRMED', startDateTime: day('2026-12-05', 14), operatory: { id: 50 } },
     { id: 8, status: 'COMPLETE', startDateTime: day('2026-10-01'), operatory: { id: 49 } },
@@ -64,7 +67,8 @@ test('find_patient: two of name, birth date, phone; a card with upcoming visits;
   assert.equal(c.date_of_birth, '1980-01-01');
   assert.deepEqual(c.upcoming.map((u: any) => [u.id, u.start, u.visit_kind, u.status]),
     [['7', '2026-12-05T14:00', 'new_patient', 'Scheduled'], ['9', '2026-12-10T15:00', null, 'Confirmed']]);
-  assert.deepEqual(c.not_read, ['insurance', 'other_coverage', 'treatment_plan', 'due']);
+  assert.deepEqual([c.insurance, c.other_coverage], ['humana', null]);
+  assert.deepEqual(c.not_read, ['treatment_plan', 'due']);
   const byDob: any = await findPatient(f.s, { first_name: 'Test', last_name: 'Testerson', date_of_birth: '1980-01-01' }, NOW);
   assert.deepEqual(byDob.matches.map((m: any) => m.patient_id), ['900']);
 });

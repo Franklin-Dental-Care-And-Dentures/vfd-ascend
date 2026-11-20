@@ -15,6 +15,9 @@
 import type { Reply } from './session.ts';
 
 export const AGE_MIN = 16;
+// Patients this link registered while it has been running: book gives them the New Patient exam only (decision 1708;
+// the sim's created list). Kept in memory, like the sim's, never on disk.
+export const CREATED = new Set<string>();
 export const PLANS = ['caresource', 'humana', 'amerihealth', 'buckeye', 'molina', 'other'];
 
 export type Caller = { call(method: 'GET' | 'POST', path: string, body?: unknown): Promise<Reply> };
@@ -135,6 +138,7 @@ export async function createPatient(s: Caller, p: NewPatient, today: string): Pr
   const j = made.json as any;
   const id = typeof j === 'number' ? j : j?.patientId ?? j?.id;
   if (!id) return { ok: false, error: 'Ascend did not return the new patient id' };
+  CREATED.add(String(id));
 
   const back = await s.call('GET', `/patient/${id}`);
   const bad = readBackDiff(body, (back.json ?? {}) as Record<string, any>);
