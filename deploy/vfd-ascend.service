@@ -1,7 +1,9 @@
 # The Vida Ascend link (repo vfd-ascend). Installed as /etc/systemd/system/vfd-ascend.service on CT 115.
+# It listens on the server's Tailscale address only; Vida's engine on the Mac mini (vfd-mac) dials it there.
+# At boot it retries until Tailscale has the address (Restart=on-failure).
 [Unit]
 Description=Vida Ascend link: signed-in Ascend session and the tool server Vida dials
-After=network-online.target npreg-xvfb.service
+After=network-online.target npreg-xvfb.service tailscaled.service
 Wants=network-online.target
 Requires=npreg-xvfb.service
 
@@ -11,7 +13,7 @@ Group=npreg
 WorkingDirectory=/opt/vfd-ascend
 Environment=DISPLAY=:99
 Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
-Environment=VFD_ASCEND_LISTEN=127.0.0.1
+Environment=VFD_ASCEND_LISTEN=100.87.13.111
 Environment=VFD_ASCEND_PORT=8795
 ExecStart=/usr/bin/node /opt/vfd-ascend/src/main.ts
 Restart=on-failure
