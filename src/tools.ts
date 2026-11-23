@@ -10,11 +10,15 @@ import { book, findOpenTimes } from './booking.ts';
 import { cancel, confirm, noteOnAppointment, reschedule } from './changes.ts';
 import { sendForms, type FormPoster } from './forms.ts';
 import { findPatient, strikeCount } from './lookup.ts';
+import { leaveNote, type Post } from './notes.ts';
 import { createPatient, type Caller, type NewPatient } from './patients.ts';
 
 export type Tool = { name: string; description: string; inputSchema: Record<string, unknown> };
 export type Result = Record<string, unknown>;
-export type Handler = (args: Record<string, unknown>, meta: { caller_id?: string }) => Promise<Result>;
+// What the engine sends beside a tool call's arguments: the number the call came from, the engine's call id, and
+// whether the caller is in pain (vfd-agent engine/tools/sim.go meta).
+export type Meta = { caller_id?: string; call_id?: string; pain?: boolean };
+export type Handler = (args: Record<string, unknown>, meta: Meta) => Promise<Result>;
 
 type ContractTool = { function: { name: string; description: string; parameters: Record<string, unknown> } };
 const contract: { tools: ContractTool[] } =
@@ -59,7 +63,12 @@ export function useAscend(s: Caller & FormPoster): void {
   HANDLERS.set('send_forms', async (a) => sendForms(s, a));
 }
 
-export async function callTool(name: string, args: Record<string, unknown>, meta: { caller_id?: string } = {}):
+// Switch on leave_note: a staff message goes to Vida's records service, never into Ascend (decisions 2223, 2259).
+export function useStaff(post: Post): void {
+  HANDLERS.set('leave_note', async (a, meta) => leaveNote(post, a, meta));
+}
+
+export async function callTool(name: string, args: Record<string, unknown>, meta: Meta = {}):
     Promise<Result> {
   const h = HANDLERS.get(name);
   if (h) return h(args, meta);

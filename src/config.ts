@@ -30,5 +30,11 @@ export const FAILS_IN_A_ROW_TO_STOP = 2;
 // The service (deploy/vfd-ascend.service): the link key's file - this server's copy of 1Password item "Vida Ascend
 // link key", stored by pve /root/store-vfd-ascend-key.sh, never logged - and where the tool server listens.
 export const KEY_FILE = process.env.VFD_ASCEND_KEY_FILE ?? '/etc/npreg/vfd-ascend.key';
+// Vida's records service on VM 104 (vfd-agent vida-staff, decision 2259), where leave_note stores a staff message:
+// https://10.159.0.18:8444 once it is set up. Empty: leave_note stays off. The key is this server's copy of
+// 1Password item "Vida records key - link"; the certificate is the service's own, the only one trusted for it.
+export const STAFF_URL = process.env.VFD_STAFF_URL ?? '';
+export const STAFF_KEY_FILE = process.env.VFD_STAFF_KEY_FILE ?? '/etc/npreg/vida-staff.key';
+export const STAFF_CA_FILE = process.env.VFD_STAFF_CA_FILE ?? '/etc/npreg/vida-staff.crt';
 export const LISTEN_HOST = process.env.VFD_ASCEND_LISTEN ?? '127.0.0.1';
 export const LISTEN_PORT = Number(process.env.VFD_ASCEND_PORT ?? 8795);

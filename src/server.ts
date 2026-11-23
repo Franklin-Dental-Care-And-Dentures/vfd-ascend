@@ -5,7 +5,7 @@ import { createServer, type Server as HttpServer } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { TOOLS, callTool } from './tools.ts';
+import { TOOLS, callTool, type Meta } from './tools.ts';
 
 function keyOk(header: string | undefined, key: string): boolean {
   const want = Buffer.from(`Bearer ${key}`);
@@ -27,7 +27,7 @@ export function startServer(opts: { host: string; port: number; key: string }): 
     const mcp = new Server({ name: 'vfd-ascend', version: '0.1.0' }, { capabilities: { tools: {} } });
     mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
     mcp.setRequestHandler(CallToolRequestSchema, async (r) => {
-      const meta = (r.params._meta ?? {}) as { caller_id?: string };
+      const meta = (r.params._meta ?? {}) as Meta;
       let out;
       try {
         out = await callTool(r.params.name, (r.params.arguments ?? {}) as Record<string, unknown>, meta);
