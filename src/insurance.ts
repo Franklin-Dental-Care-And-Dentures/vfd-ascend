@@ -13,7 +13,8 @@
 // DentaQuest's Humana Healthy Horizon and OHIO Amerihealth Medicaid Adult; Envolve Dental - Ohio (Buckeye, as the
 // pre-auth tracker names it, decision 993); Medicaid OH- Molina HealthCare. Delta Dental of Ohio, United HealthCare
 // Community Plan and Medicaid of Ohio (Ohio Medicaid) are none of the five and read 'other'. A name with Medicare in
-// it reads 'medicare' first. Nothing here prints or keeps patient data.
+// it reads 'medicare' first; a dual plan's name (MyCare, Gold Plus, Dual, VIP Care, D-SNP, special needs) reads
+// 'other' even beside one of the five (decision 2233: no dual plans). Nothing here prints or keeps patient data.
 import type { Caller } from './patients.ts';
 import { local, midnight } from './booking.ts';
 
@@ -21,6 +22,7 @@ export const PLAN_KEYS = ['caresource', 'humana', 'amerihealth', 'buckeye', 'mol
 
 const BY_NAME: [RegExp, string][] = [
   [/medicare/i, 'medicare'],
+  [/\bduals?\b|\bmy ?care\b|\bgold plus\b|\bvip care\b|\bd-? ?snp\b|\bspecial needs\b/i, 'other'],
   [/caresource/i, 'caresource'],
   [/humana/i, 'humana'],
   [/amerihealth/i, 'amerihealth'],

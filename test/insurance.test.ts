@@ -48,3 +48,14 @@ test('which visits a record may book (decisions 1864, 1865)', () => {
     assert.equal(insuranceAllows(c, 'new_patient'), true);
   }
 });
+
+// Decision 2233: a dual plan's name is not one of the five, even with one of their names in it.
+test('a dual plan reads other; Medicare reads medicare; the five alone as before', async () => {
+  const { planKey } = await import('../src/insurance.ts');
+  for (const n of ['Humana Gold Plus HMO', 'CareSource MyCare Ohio', 'Molina Dual Options', 'AmeriHealth Caritas VIP Care Plus',
+    'Buckeye D-SNP', 'Humana Special Needs Plan']) assert.equal(planKey(n), 'other', n);
+  assert.equal(planKey('CareSource Medicare Advantage'), 'medicare');
+  assert.equal(planKey('CareSource OH Medicaid (Delta) OHIO CareSource Medicaid adult'), 'caresource');
+  assert.equal(planKey('DentaQuest Humana Healthy Horizon'), 'humana');
+  assert.equal(planKey('Envolve Dental - Ohio'), 'buckeye');
+});
