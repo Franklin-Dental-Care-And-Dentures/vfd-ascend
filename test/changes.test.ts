@@ -13,7 +13,7 @@ const v = (id: number, op: number, start: number, duration: number, status = 'UN
     startDateTime: start, endDateTime: start + duration * 60000, duration, status, ...extra });
 
 // Visit 73 (No Show) is one strike in force; strikes adds more before it.
-function fake(opts: { strikes?: number } = {}) {
+function fake(opts: { strikes?: number; dob?: number; seen?: boolean; rai?: boolean } = {}) {
   const writes: string[] = [];
   let n = 5000;
   const visits = new Map<number, any>([
@@ -22,6 +22,7 @@ function fake(opts: { strikes?: number } = {}) {
     [73, v(73, 49, at('2026-11-10', '09:00'), 30, 'NOSHOW')],
     [74, v(74, 51, at('2026-12-02', '09:00'), 30)],                    // crown prep: not a link visit
     [75, v(75, 49, at('2026-12-03', '09:00'), 30, 'CONFIRMED', { labCase: { id: 1 } })],
+    ...(opts.seen ? [[76, v(76, 49, at('2026-10-01', '09:00'), 30, 'COMPLETE')]] as [number, any][] : []),
   ]);
   const missed: any[] = Array.from({ length: opts.strikes ?? 0 }, (_, i) =>
     ({ id: 90 + i, appointmentId: 900 + i, status: 'NOSHOW', startDateTime: at(`2026-0${i + 3}-02`, '09:00') }));
@@ -34,7 +35,7 @@ function fake(opts: { strikes?: number } = {}) {
       }
       if (path.startsWith('/appointmentREST?patientId=900')) return { status: 200, json: [...visits.values()].map((x) => structuredClone(x)) };
       if (path.startsWith('/missedAppointment?patientIds=900')) return { status: 200, json: missed };
-      if (path === '/patient/900') return { status: 200, json: { id: 900, relationships: { primaryContact: { id: 900 } } } };
+      if (path === '/patient/900') return { status: 200, json: { id: 900, ...(opts.dob === undefined ? {} : { dateOfBirth: opts.dob }), relationships: { primaryContact: { id: 900 } } } };
       if (path === '/bootstrap/operatory') return { status: 200, json: COLS };
       if (path === '/bootstrap/provider') return { status: 200, json: [{ id: 1, lastName: 'Rai', isSchedulingEligible: true }, { id: 2, lastName: 'Taj', isSchedulingEligible: true }] };
       if (path === '/bootstrap/location') return { status: 200, json: [{ id: 700 }] };
@@ -42,9 +43,11 @@ function fake(opts: { strikes?: number } = {}) {
         const q = new URLSearchParams(path.split('?')[1]);
         const op = Number(q.get('operatories')), from = Number(q.get('startDate')), to = Number(q.get('endDate'));
         const d = Number(q.get('duration'));
+        const provs = (q.get('providers') ?? '').split(',').map(Number);
         const all = [at('2026-11-23', '10:00'), at('2026-12-04', '10:00'), at('2026-12-08', '14:00')]
           .map((t) => ({ start: t, end: t + d * 60000, operatory: { id: op }, provider: { id: 2 } }));
-        return { status: 200, json: { slots: all.filter((x) => x.start >= from && x.start <= to) } };
+        if (opts.rai) all.push({ start: at('2026-12-04', '10:00'), end: at('2026-12-04', '10:00') + d * 60000, operatory: { id: op }, provider: { id: 1 } });
+        return { status: 200, json: { slots: all.filter((x) => x.start >= from && x.start <= to && provs.includes(x.provider.id)) } };
       }
       if (method === 'POST' && path === '/appointmentREST/appointmentWithPatientLite') {
         const a = body.appointment;
@@ -149,4 +152,19 @@ test('note_on_appointment: the caller\'s words after any note there, marked as V
   assert.deepEqual(await noteOnAppointment(f.s, { appointment_id: '72', note: '  ' }), { ok: false, error: 'note is empty' });
   assert.deepEqual(await noteOnAppointment(f.s, { appointment_id: '73', note: 'x' }),
     { ok: false, refused: true, reason: 'the visit is No Show, not an upcoming visit' });
+});
+
+// Decision 2253: a patient under 16 seen before moves only to one of Dr. Rai's openings; one never seen moves as before.
+test("reschedule for a patient under 16 seen before: Dr. Rai's openings only", async () => {
+  const KID = Date.parse('2012-01-01T00:00:00Z');   // 14 on 2026-11-19
+  const f = fake({ dob: KID, seen: true, rai: true });
+  const r: any = await reschedule(f.s, { appointment_id: '71', new_start: '2026-12-04T10:00' }, NOW);
+  assert.equal(r.ok, true);
+  assert.equal(f.visits.get(Number(r.appointment_id)).provider.id, 1);
+  const g = fake({ dob: KID, seen: true, rai: true });
+  const t: any = await reschedule(g.s, { appointment_id: '71', new_start: '2026-12-08T14:00' }, NOW);   // Dr. Taj's only
+  assert.equal(t.refused, true);
+  assert.deepEqual(g.writes, []);
+  const h = fake({ dob: KID });
+  assert.equal(((await reschedule(h.s, { appointment_id: '71', new_start: '2026-12-08T14:00' }, NOW)) as any).ok, true);
 });

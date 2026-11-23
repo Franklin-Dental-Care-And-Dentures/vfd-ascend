@@ -6,7 +6,8 @@
 //   1719);
 // - reschedule: the visit kind stays; the old visit follows cancel's notice rule; under 24 hours a move that would make
 //   the third strike is refused (2.2.2 step 4; with notice a visit is moved at three, 1862); the new start must be an
-//   opening the rules allow for the kind. The link moves only a visit it would book itself (its column and length are
+//   opening the rules allow for the kind; for a patient under 16 seen before, one of Dr. Rai's (decision 2253, as book
+//   does). The link moves only a visit it would book itself (its column and length are
 //   one of the four bookable kinds); anything else is refused, for a message to the front desk. The new visit is saved
 //   and read back before the old one is closed, so a failed save never leaves the caller with no visit;
 // - set_status: Confirmed only; a visit with a lab case is not confirmed until the case is in (2.2.4);
@@ -14,7 +15,7 @@
 //   Vida's; the same save as a status write with only the note changed, then read back.
 // Ascend: GET /appointmentREST/{id} (the visit, with patientId and labCase when one is attached), then the status
 // write of status.ts. Nothing here prints or keeps patient data.
-import { KINDS, local, openings, place } from './booking.ts';
+import { KINDS, MINOR_DOCTOR, local, minorRule, openings, place } from './booking.ts';
 import { COUNT_FROM, STRIKES_REFUSE, strikeDates, strikesInForce } from './lookup.ts';
 import type { Caller } from './patients.ts';
 import { existingAppointmentJson, setStatus } from './status.ts';
@@ -79,11 +80,13 @@ export async function reschedule(s: Caller, a: Record<string, any>, nowMs = Date
   const cols = new Map<number, string>((((await s.call('GET', '/bootstrap/operatory')).json as any[]) ?? []).map((o) => [o.id, String(o.name ?? '')]));
   const kind = kindOf(cols.get(v.operatory?.id) ?? '', Number(v.duration));
   if (!kind) return refuse('not a visit the link moves: a message for the front desk');
-  const { col, found } = await openings(s, kind, false, nowMs);
+  const p = (await s.call('GET', `/patient/${pid}`)).json as any;
+  // Under 16 and seen before: the moved visit stays with Dr. Rai (decision 2253); never seen moves as before.
+  const only = (await minorRule(s, p, nowMs)) === 'only' ? MINOR_DOCTOR : undefined;
+  const { col, found } = await openings(s, kind, false, nowMs, only);
   const match = found.find((x) => x.opening.start === a.new_start);
   if (!match) return refuse('not an opening the window and hours rules allow for this visit');
 
-  const p = (await s.call('GET', `/patient/${pid}`)).json as any;
   const made = await place(s, p, match.slot, col.minutes);
   if (!made.ok) return made;
   const status = under ? 'BROKEN' : 'CANCELLEDBYOFF';
