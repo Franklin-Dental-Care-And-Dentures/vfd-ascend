@@ -2,7 +2,7 @@
 // in the sim's order, and the read-back.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { book, findOpenTimes, local, midnight, newAppointment, offerable, type Slot } from '../src/booking.ts';
+import { UNDER_16_NOT_SEEN, book, findOpenTimes, local, midnight, newAppointment, offerable, type Slot } from '../src/booking.ts';
 import { CREATED, type Caller } from '../src/patients.ts';
 
 const NOW = Date.parse('2026-11-19T21:00:00Z');   // Thu 2026-11-19 16:00 Eastern
@@ -52,7 +52,8 @@ const plan = (cip: number, order = 1, endDate?: number) =>
   ({ subscriberInsurancePlan: { carrierInsurancePlan: { id: cip } }, responsibilities: [{ paymentResponsibilityOrder: order }], ...(endDate ? { endDate } : {}) });
 const CARESOURCE = [plan(301)];
 
-type Opts = { history?: unknown[]; missed?: unknown[]; mangle?: (a: any) => void; tajSlots?: boolean; plans?: unknown[] };
+type Opts = { history?: unknown[]; missed?: unknown[]; mangle?: (a: any) => void; tajSlots?: boolean; plans?: unknown[];
+  dob?: number; providers?: unknown[] };
 function fakeAscend(opts: Opts = {}) {
   const calls: string[] = [];
   const asked: { operatory: string; duration: string; providers: string; from: string }[] = [];
@@ -61,7 +62,7 @@ function fakeAscend(opts: Opts = {}) {
     async call(method, path, body) {
       calls.push(`${method} ${path.split('?')[0]}`);
       if (path === '/bootstrap/operatory') return { status: 200, json: COLUMNS };
-      if (path === '/bootstrap/provider') return { status: 200, json: [{ id: 1, lastName: 'Rai', isSchedulingEligible: true }, { id: 2, lastName: 'Taj', isSchedulingEligible: true }, { id: 3, lastName: 'Taj' }] };
+      if (path === '/bootstrap/provider') return { status: 200, json: opts.providers ?? [{ id: 1, lastName: 'Rai', isSchedulingEligible: true }, { id: 2, lastName: 'Taj', isSchedulingEligible: true }, { id: 3, lastName: 'Taj' }] };
       if (path === '/bootstrap/location') return { status: 200, json: [{ id: 700 }] };
       if (path === '/bootstrap/insuranceCarrier') return { status: 200, json: CARRIERS };
       if (path === '/patientInsurancePlanREST/900') return { status: 200, json: opts.plans ?? CARESOURCE };
@@ -77,7 +78,7 @@ function fakeAscend(opts: Opts = {}) {
           slot('2026-12-03', '10:00', 1, op), ...(opts.tajSlots === false ? [] : [slot('2026-12-05', '09:00', 2, op)])];
         return { status: 200, json: { slots: all.filter((x) => x.start >= from && x.start <= to && provs.includes(x.provider.id)) } };
       }
-      if (path === '/patient/900') return { status: 200, json: { id: 900, relationships: { primaryContact: { id: 900 } } } };
+      if (path === '/patient/900') return { status: 200, json: { id: 900, ...(opts.dob === undefined ? {} : { dateOfBirth: opts.dob }), relationships: { primaryContact: { id: 900 } } } };
       if (path.startsWith('/appointmentREST?patientId=900')) {
         if (!saved) return { status: 200, json: opts.history ?? [] };
         const a = { ...structuredClone(saved.appointment), id: 4242 };
@@ -220,4 +221,53 @@ test('a read-back that differs is not success', async () => {
   const r: any = await book(f.s, { patient_id: '900', start: '2026-12-05T09:00', visit_kind: 'new_patient' }, NOW);
   assert.equal(r.ok, false);
   assert.match(r.error, /read-back differs in: provider/);
+});
+
+// Under 16 (decisions 1725, 2251, 2252): seen before -> Dr. Rai's openings only; never seen -> not booked.
+const KID = Date.parse('2012-01-01T00:00:00Z');          // 14 on 2026-11-19
+const SIXTEEN = Date.parse('2010-11-19T00:00:00Z');      // 16 on 2026-11-19
+const SEEN = [{ id: 1, status: 'COMPLETE', startDateTime: at('2026-10-01', '09:00') }];
+
+test("under 16 and seen before: Dr. Rai's openings only, from find_open_times and book", async () => {
+  const f = fakeAscend({ dob: KID, history: SEEN });
+  const r: any = await findOpenTimes(f.s, { visit_kind: 'filling', patient_id: '900' }, NOW);
+  assert.deepEqual(r.openings.map((o: any) => o.start), ['2026-12-01T08:30', '2026-12-03T10:00']);
+  assert.deepEqual(f.asked.at(-1), { operatory: 'SRP/FILLS', duration: '30', providers: '1', from: '2026-11-26' });
+  assert.deepEqual(await book(f.s, { patient_id: '900', start: '2026-12-05T09:00', visit_kind: 'filling' }, NOW),
+    { ok: false, refused: true, reason: 'not an opening the window and hours rules allow for this visit' });   // Dr. Taj's
+  assert.ok(!posted(f));
+  assert.equal(((await book(f.s, { patient_id: '900', start: '2026-12-01T08:30', visit_kind: 'filling' }, NOW)) as any).ok, true);
+  assert.deepEqual(f.saved().appointment.provider, { id: 1 });
+  const pain = fakeAscend({ dob: KID, history: SEEN });
+  const p: any = await findOpenTimes(pain.s, { visit_kind: 'limited', in_pain: true, patient_id: '900' }, NOW);
+  assert.deepEqual(p.openings.map((o: any) => o.start), ['2026-11-20T09:00']);
+});
+
+test('under 16 and never seen: book refuses; find_open_times still answers, so a visit staff booked can move', async () => {
+  for (const history of [[], [{ id: 2, status: 'NOSHOW', startDateTime: at('2026-10-01', '09:00') }],
+    [{ id: 3, status: 'UNCONFIRMED', startDateTime: at('2026-12-10', '09:00') }]]) {
+    const f = fakeAscend({ dob: KID, history });
+    assert.deepEqual(await book(f.s, { patient_id: '900', start: '2026-12-01T08:30', visit_kind: 'filling' }, NOW),
+      { ok: false, refused: true, reason: UNDER_16_NOT_SEEN });
+    assert.ok(!posted(f));
+    const r: any = await findOpenTimes(f.s, { visit_kind: 'filling', patient_id: '900' }, NOW);
+    assert.equal(r.ok, true);
+    assert.equal(f.asked.at(-1)!.providers, '1,2');
+  }
+});
+
+test('16 today, or no date of birth on the record: any open doctor, as before', async () => {
+  for (const dob of [SIXTEEN, undefined]) {
+    const f = fakeAscend({ dob });
+    await findOpenTimes(f.s, { visit_kind: 'filling', patient_id: '900' }, NOW);
+    assert.equal(f.asked.at(-1)!.providers, '1,2');
+    assert.equal(((await book(f.s, { patient_id: '900', start: '2026-12-05T09:00', visit_kind: 'filling' }, NOW)) as any).ok, true);
+  }
+});
+
+test('under 16 and seen before, with no bookable Dr. Rai: nothing offered and nothing booked', async () => {
+  const f = fakeAscend({ dob: KID, history: SEEN, providers: [{ id: 2, lastName: 'Taj', isSchedulingEligible: true }] });
+  await assert.rejects(findOpenTimes(f.s, { visit_kind: 'filling', patient_id: '900' }, NOW), /no bookable doctor matching/);
+  await assert.rejects(book(f.s, { patient_id: '900', start: '2026-12-05T09:00', visit_kind: 'filling' }, NOW), /no bookable doctor matching/);
+  assert.ok(!posted(f));
 });

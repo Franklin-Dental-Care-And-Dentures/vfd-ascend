@@ -77,6 +77,7 @@ test('find_patient: two of name, birth date, phone; a card with upcoming visits 
   assert.deepEqual([c.insurance, c.other_coverage], ['humana', null]);
   assert.deepEqual([c.treatment_plan, c.due], [['extraction', 'filling'], 'cleaning']);
   assert.equal('not_read' in c, false);
+  assert.equal(c.seen_before, true);   // the 2026-10-01 visit marked Complete (decisions 2251, 2252)
   const byDob: any = await findPatient(f.s, { first_name: 'Test', last_name: 'Testerson', date_of_birth: '1980-01-01' }, NOW);
   assert.deepEqual(byDob.matches.map((m: any) => m.patient_id), ['900']);
 });
@@ -95,4 +96,16 @@ test('strike_count: No Show and Broken count once each; Canceled by Office never
   assert.deepEqual(r.strikes, [{ date: '2026-03-02' }, { date: '2026-06-10' }]);
   assert.deepEqual(await strikeCount(fake().s, { patient_id: '900' }, NOW),
     { ok: true, count: 0, blocked: false, blocked_until: null, clean_slate_on: null, strikes: [] });
+});
+
+test('find_patient: seen_before only for a past visit marked Complete', async () => {
+  for (const [visits, want] of [
+    [[], false],
+    [[{ id: 1, status: 'NOSHOW', startDateTime: day('2026-10-01'), operatory: { id: 49 } }], false],
+    [[{ id: 2, status: 'COMPLETE', startDateTime: day('2026-12-01'), operatory: { id: 49 } }], false],   // not past
+    [[{ id: 3, status: 'COMPLETE', startDateTime: day('2025-05-01'), operatory: { id: 49 } }], true],
+  ] as [any[], boolean][]) {
+    const r: any = await findPatient(fake({ visits }).s, { first_name: 'Test', last_name: 'Testerson', phone: '5135551111' }, NOW);
+    assert.equal(r.matches[0].seen_before, want);
+  }
 });

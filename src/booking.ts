@@ -11,16 +11,20 @@
 //
 // book refuses, in the sim's order: a visit that is a message; a record without one of the five plans alone, unless
 // the visit is the self-pay New Patient exam (1864, 1865); three strikes in force (1716); a patient this link has just
-// registered, unless the visit is the New Patient exam (1708); a start that is not an opening the rules allow.
+// registered, unless the visit is the New Patient exam (1708); a patient under 16 never seen here (1725, 2251); a start
+// that is not an opening the rules allow.
+//
+// Under 16 (decisions 1725, 2251, 2252): a registered patient under 16 who has been seen here before (a past visit
+// marked Complete) gets Dr. Rai's openings only, from find_open_times and book; one never seen is not booked.
 //
 // Ascend's calls: GET /bootstrap/operatory and /bootstrap/provider (ids, read at call time), GET
 // /v3/availableAppointments (dates as epoch ms, lists comma-joined, as Ascend's Search for Openings sends them),
 // POST /appointmentREST/appointmentWithPatientLite with { isAppointmentEmpty, appointment, patient, primaryContact }
 // (the shape Ascend's appointment editor saves; appointment = the Appointment model's own toJSON), then GET
 // /appointmentREST?patientId to read the visit back. Nothing here prints or keeps patient data.
-import { CREATED, type Caller } from './patients.ts';
+import { CREATED, ageOn, type Caller } from './patients.ts';
 import { coverage, insuranceAllows } from './insurance.ts';
-import { COUNT_FROM, STRIKES_REFUSE, strikeDates, strikesInForce } from './lookup.ts';
+import { COUNT_FROM, STRIKES_REFUSE, dobOf, strikeDates, strikesInForce } from './lookup.ts';
 
 export const TZ = 'America/New_York';
 export const WINDOW_FIRST_DAY = 7;
@@ -77,6 +81,12 @@ export function offerable(slots: Slot[], nowMs: number, kind: string, inPain = f
 // Dr. Rai (decision 2188): new patients go to Dr. Taj; the doctor is found by last name among the bookable ones.
 export const NEW_PATIENT_DOCTOR = /^taj$/i;
 
+// Under 16 (decisions 1725, 2251, 2252): seen before -> Dr. Rai's openings only, never another doctor's; never seen ->
+// no booking. The doctor is found by last name among the bookable ones, as Dr. Taj is.
+export const MINOR_AGE = 16;
+export const MINOR_DOCTOR = /^rai$/i;
+export const UNDER_16_NOT_SEEN = 'under 16 and never seen here: not booked (decisions 1725, 2251)';
+
 export type Kind = { column: RegExp; minutes: number; doctor?: RegExp };
 export const KINDS: Record<string, Kind> = {
   new_patient: { column: /^new patients?$/i, minutes: 30, doctor: NEW_PATIENT_DOCTOR },
@@ -89,15 +99,17 @@ export const VISIT_KINDS = [...Object.keys(KINDS), ...MESSAGE_ONLY];
 
 type Column = { operatory: number; providers: number[]; preferred?: number; minutes: number };
 
-async function columnAndDoctors(s: Caller, kind: string): Promise<Column> {
+async function columnAndDoctors(s: Caller, kind: string, only?: RegExp): Promise<Column> {
   const k = KINDS[kind];
   const ops: any[] = (await s.call('GET', '/bootstrap/operatory')).json as any[] ?? [];
   const col = ops.filter((o) => k.column.test(String(o.name ?? '').trim()));
   if (col.length !== 1) throw new Error(`expected one ${k.column.source} column, found ${col.length}`);
   const provs: any[] = (await s.call('GET', '/bootstrap/provider')).json as any[] ?? [];
-  const providers = provs.filter((p) => p.isSchedulingEligible).map((p) => p.id);
-  if (!providers.length) throw new Error('no bookable doctor in Ascend');
-  const pick = k.doctor && provs.find((p) => p.isSchedulingEligible && k.doctor!.test(String(p.lastName ?? '').trim()));
+  const named = (re: RegExp) => (p: any) => re.test(String(p.lastName ?? '').trim());
+  const eligible = provs.filter((p) => p.isSchedulingEligible);
+  const providers = (only ? eligible.filter(named(only)) : eligible).map((p) => p.id);
+  if (!providers.length) throw new Error(only ? `no bookable doctor matching ${only.source} in Ascend` : 'no bookable doctor in Ascend');
+  const pick = !only && k.doctor ? eligible.find(named(k.doctor)) : undefined;
   return { operatory: col[0].id, providers, preferred: pick ? pick.id : undefined, minutes: k.minutes };
 }
 
@@ -112,8 +124,9 @@ async function slotsBetween(s: Caller, col: Column, from: string, to: string): P
 }
 
 // The openings for a visit kind; a New Patient exam's on Dr. Taj's first, any open doctor's only when she has none.
-export async function openings(s: Caller, kind: string, inPain: boolean, nowMs: number) {
-  const col = await columnAndDoctors(s, kind);
+// only: one doctor's openings and no other's (a patient under 16, Dr. Rai).
+export async function openings(s: Caller, kind: string, inPain: boolean, nowMs: number, only?: RegExp) {
+  const col = await columnAndDoctors(s, kind, only);
   if (col.preferred !== undefined) {
     const hers = await search(s, { ...col, providers: [col.preferred] }, kind, inPain, nowMs);
     if (hers.length) return { col, found: hers };
@@ -150,7 +163,15 @@ const messageOnly = (kind: string) => refuse(`${kind} is a message in this relea
 export async function findOpenTimes(s: Caller, a: Record<string, any>, nowMs = Date.now()): Promise<Record<string, unknown>> {
   if (!VISIT_KINDS.includes(a.visit_kind)) return kindError();
   if (MESSAGE_ONLY.includes(a.visit_kind)) return messageOnly(a.visit_kind);
-  let opens = (await openings(s, a.visit_kind, Boolean(a.in_pain), nowMs)).found.map((x) => x.opening);
+  // A registered patient under 16 seen before: Dr. Rai's openings only. One never seen is refused at book, not here,
+  // so moving a visit staff already booked goes on as before.
+  let only: RegExp | undefined;
+  const pid = String(a.patient_id ?? '');
+  if (/^\d+$/.test(pid)) {
+    const p = (await s.call('GET', `/patient/${pid}`)).json as any;
+    if (p?.id && (await minorRule(s, p, nowMs)) === 'only') only = MINOR_DOCTOR;
+  }
+  let opens = (await openings(s, a.visit_kind, Boolean(a.in_pain), nowMs, only)).found.map((x) => x.opening);
   if (a.day) opens = opens.filter((o) => o.date === a.day);
   if (a.time_of_day === 'morning') opens = opens.filter((o) => o.time < NOON);
   else if (a.time_of_day === 'afternoon') opens = opens.filter((o) => o.time >= NOON);
@@ -158,6 +179,19 @@ export async function findOpenTimes(s: Caller, a: Record<string, any>, nowMs = D
 }
 
 const rowsOf = (j: any): any[] => (Array.isArray(j) ? j : j?.appointments ?? []);
+
+// Seen here before: a past visit marked Complete.
+export function seenBefore(visits: any[], nowMs: number): boolean {
+  return visits.some((v) => v?.status === 'COMPLETE' && typeof v?.startDateTime === 'number' && v.startDateTime < nowMs);
+}
+
+// The under-16 rule for a registered patient: 'any' doctor (16 or older, or no date of birth on the record), Dr. Rai
+// 'only' (under 16 and seen before), or 'not_seen' (under 16 and never seen: no booking).
+export async function minorRule(s: Caller, p: any, nowMs: number): Promise<'any' | 'only' | 'not_seen'> {
+  const dob = dobOf(p?.dateOfBirth);
+  if (!dob || ageOn(dob.split('-').map(Number) as [number, number, number], local(nowMs).date) >= MINOR_AGE) return 'any';
+  return seenBefore(rowsOf((await s.call('GET', `/appointmentREST?patientId=${p.id}`)).json), nowMs) ? 'only' : 'not_seen';
+}
 
 // Save one visit at a slot exactly as Ascend's own Appointment model sends a new one (its toJSON, read in the
 // signed-in page at 16:20 ET 2026-11-19: a fuller body with the read-only flags got HTTP 500 and saved nothing), then
@@ -196,8 +230,10 @@ export async function book(s: Caller, a: Record<string, any>, nowMs = Date.now()
     return refuse('three strikes in force: no booking (decision 1716)');
   }
   if (CREATED.has(pid) && kind !== 'new_patient') return refuse('a new patient is booked for the New Patient exam only (1708)');
+  const minor = await minorRule(s, p, nowMs);
+  if (minor === 'not_seen') return refuse(UNDER_16_NOT_SEEN);
 
-  const { col, found } = await openings(s, kind, Boolean(a.in_pain), nowMs);
+  const { col, found } = await openings(s, kind, Boolean(a.in_pain), nowMs, minor === 'only' ? MINOR_DOCTOR : undefined);
   const match = found.find((x) => x.opening.start === a.start);
   if (!match) return refuse('not an opening the window and hours rules allow for this visit');
   const r = await place(s, p, match.slot, col.minutes);
